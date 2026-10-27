@@ -2,6 +2,8 @@
 
 `yardim-masasi`, verilen Python paketlerinin PyPI'da bildirilen güncel sürümünü ve desteklediği Python sürüm aralığını terminalde gösteren küçük bir komut satırı aracıdır. Paketleri kurmadan bilgilerini sorgular.
 
+`talep-ozeti` komutu bir JSON dosyasındaki destek taleplerini durumlarına göre sayar ve kapanmamış talepleri öncelik sırasıyla listeler. `ornek/talepler.json` on iki örnek talep içerir.
+
 Proje aynı zamanda Python yorumlayıcısı, sanal ortam, `uv`, bağımlılık yönetimi ve ortam değişkenleri üzerine bir çalışma örneğidir.
 
 ## Gerekenler
@@ -24,22 +26,22 @@ uv sync --locked
 
 ## Çalıştırma
 
-Tek paket veya boşlukla ayrılmış birden fazla paket sorgulanabilir:
+    uv run yardim-masasi httpx fastapi
+    uv run talep-ozeti
+    uv run talep-ozeti ornek/talepler.json
 
-```bash
-uv run --locked yardim-masasi httpx
-uv run --locked yardim-masasi httpx fastapi
-```
+`talep-ozeti`'ne dosya verilmezse `ornek/talepler.json` okunur.
 
-Örnek çıktı biçimi; gerçek sürümler PyPI yanıtına göre değişir:
+## Talep Dosyası
 
-```text
-httpx 0.28.1 (Python >=3.8)
-```
+Bir JSON listesi; her talep şu alanları taşır:
 
-Paketin Python sürüm koşulu boşsa `Python belirtilmemiş` yazılır. Paket adı verilmezse program çıktı üretmeden sonlanır.
-
-Komut, her paket için `https://pypi.org/pypi/{paket}/json` adresine sırayla istek yapar. Yanıtın `info.name`, `info.version` ve `info.requires_python` alanlarını kullanır; kurulu paketleri veya projedeki sürüm kısıtlarını denetlemez.
+    id          sayı
+    baslik      metin
+    durum       acik, beklemede, kapali
+    oncelik     yuksek, orta, dusuk
+    etiketler   metin listesi (boş olabilir)
+    musteri     e-posta adresi
 
 ## Ortam Değişkenleri
 
@@ -73,7 +75,12 @@ PYPI_ZAMAN_ASIMI=2.5 uv run --locked yardim-masasi httpx
 src/yardim_masasi/
     __init__.py       Komut satırı giriş noktası; paketleri sırayla sorgular.
     pypi.py           HTTP isteği, zaman aşımı ayarı ve çıktı biçimlendirmesi.
+    metin.py          Türkçe harf dönüşümü, etiket temizleme ve metin yardımcıları.
+    talepler.py       Talep filtreleme, sıralama, arama ve özet komutu.
 tests/test_pypi.py     Özet biçimi ve ortam değişkeni testleri.
+tests/test_metin.py    Türkçe metin yardımcılarının testleri.
+tests/test_talepler.py Talep işlemlerinin testleri.
+ornek/talepler.json    On iki örnek destek talebi.
 notes/                Günlük öğrenme ve çalışma notları.
 pyproject.toml        Proje tanımı, bağımlılıklar ve komutun giriş noktası.
 uv.lock               Çözümlenmiş doğrudan ve dolaylı bağımlılıklar.
@@ -89,7 +96,7 @@ uv.lock               Çözümlenmiş doğrudan ve dolaylı bağımlılıklar.
 uv run --locked pytest -q
 ```
 
-Mevcut beş test; paket adı/sürüm/Python bilgisinin biçimlendirilmesini, Python koşulunun `None` veya boş metin olmasını ve zaman aşımının varsayılan ya da ortam değişkeninden alınmasını kontrol eder. Testler gerçek PyPI isteği yapmaz; ağ hataları ve komut satırı akışı bu testlerin kapsamı dışındadır.
+Mevcut 31 testin beşi PyPI özetini ve zaman aşımı ayarını, 13'ü metin yardımcılarını, 13'ü talep işlemlerini kontrol eder. Testler gerçek PyPI isteği yapmaz; ağ hataları ve komut satırı akışı bu testlerin kapsamı dışındadır.
 
 ## Bağımlılık Yönetimi
 
@@ -111,9 +118,14 @@ Mevcut beş test; paket adı/sürüm/Python bilgisinin biçimlendirilmesini, Pyt
 - `PYPI_ZAMAN_ASIMI` sayıya çevrilemiyorsa `ValueError` oluşur. Değer aralığı için ayrıca doğrulama yapılmaz.
 - Yardım ekranı, seçenek ayrıştırma, önbellek ve otomatik yeniden deneme bulunmaz.
 - Bağımlılıklar için otomatik güvenlik açığı taraması yapılandırılmamıştır.
+- `talep-ozeti`'ne verilen dosya yoksa ya da geçerli JSON değilse düzgün bir mesaj yok; Python'un hata izi basılır.
+- Varsayılan `ornek/talepler.json` yolu komutun çalıştırıldığı klasöre göredir; proje kökünden başka bir klasörde dosya bulunamaz.
+- Kapanmamış bir talepteki bilinmeyen bir `oncelik` değeri `talep-ozeti`'ni `KeyError` ile durdurur.
 
 ## Çalışma Notları ve Git Akışı
 
 [23.10.2026 günlük özeti](notes/daily-summary-23-10-2026.md), Python ve uv ile ilgili öğrenme notlarını içerir.
+
+[27.10.2026 günlük özeti](notes/daily-summary-27-10-2026.md), Python veri tipleri, metin işleme ve talep fonksiyonları üzerine öğrenme notlarını içerir.
 
 Değişiklikler yerel çalışma alanında tutulur; kullanıcı açıkça istemeden commit veya GitHub'a push yapılmaz. Commit istendiğinde anlamlı işler ayrı commitlere ayrılır; push için ayrıca kullanıcının talebi gerekir.
