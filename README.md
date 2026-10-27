@@ -116,4 +116,4 @@ Mevcut beş test; paket adı/sürüm/Python bilgisinin biçimlendirilmesini, Pyt
 
 [23.10.2026 günlük özeti](notes/daily-summary-23-10-2026.md), Python ve uv ile ilgili öğrenme notlarını içerir.
 
-Tamamlanan her anlamlı değişiklik uygun kontrollerden sonra ayrı bir commit olarak kaydedilir ve her committen sonra GitHub'a push edilir. Gelecek oturumlar için bu çalışma tercihi [AGENTS.md](AGENTS.md) dosyasında da kayıtlıdır.
+Değişiklikler yerel çalışma alanında tutulur; kullanıcı açıkça istemeden commit veya GitHub'a push yapılmaz. Commit istendiğinde anlamlı işler ayrı commitlere ayrılır; push için ayrıca kullanıcının talebi gerekir.
