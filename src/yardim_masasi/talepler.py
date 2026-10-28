@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from yardim_masasi.metin import kisalt, kucuk_harf
-from yardim_masasi.model import Talep, talepleri_oku
+from yardim_masasi.model import Talep, TalepHatasi, talepleri_oku
 
 DURUMLAR = ("acik", "beklemede", "kapali")
 ONCELIK_SIRASI = {"yuksek": 0, "orta": 1, "dusuk": 2}
@@ -56,8 +56,15 @@ def ozet_satiri(talep: Talep) -> str:
 
 
 def main() -> None:
+    if len(sys.argv) > 2:
+        print("kullanım: talep-ozeti [dosya]", file=sys.stderr)
+        sys.exit(2)
     yol = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("ornek/talepler.json")
-    talepler = talepleri_oku(yol)
+    try:
+        talepler = talepleri_oku(yol)
+    except TalepHatasi as hata:
+        print(f"talep-ozeti: {hata}", file=sys.stderr)
+        sys.exit(1)
     sayilar = durum_sayilari(talepler)
     print(", ".join(f"{durum}: {sayi}" for durum, sayi in sayilar.items()))
     print()
