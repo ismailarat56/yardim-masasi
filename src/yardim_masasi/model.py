@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from yardim_masasi.akis import JsonSatirHatasi, jsonl_oku
+
 
 class TalepHatasi(Exception):
     """Talep verisiyle ilgili bütün hataların atası."""
@@ -84,38 +86,48 @@ class Talep:
         )
 
 
-def talepleri_oku(yol: Path) -> list[Talep]:
+def _dosyadaki_ogeler(yol: Path) -> list:
     try:
+        if yol.suffix == ".jsonl":
+            return list(jsonl_oku(yol))
         metin = yol.read_text(encoding="utf-8")
     except FileNotFoundError as hata:
         raise TalepDosyasiHatasi(f"dosya bulunamadı: {yol}") from hata
     except OSError as hata:
         raise TalepDosyasiHatasi(f"dosya okunamadı: {yol}") from hata
+    except JsonSatirHatasi as hata:
+        raise TalepDosyasiHatasi(
+            f"geçerli JSON değil: {yol} "
+            f"(satır {hata.satir}, sütun {hata.sutun})"
+        ) from hata
 
     try:
-        veriler = json.loads(metin)
+        veri = json.loads(metin)
     except json.JSONDecodeError as hata:
         raise TalepDosyasiHatasi(
             f"geçerli JSON değil: {yol} "
             f"(satır {hata.lineno}, sütun {hata.colno})"
         ) from hata
 
-    if not isinstance(veriler, list):
+    if not isinstance(veri, list):
         raise TalepDosyasiHatasi(f"talep listesi bekleniyordu: {yol}")
+    return veri
 
+
+def talepleri_oku(yol: Path) -> list[Talep]:
     talepler = []
-    gorulen_idler = set()
+    gorulen = set()
 
-    for sira, veri in enumerate(veriler, start=1):
+    for sira, oge in enumerate(_dosyadaki_ogeler(yol), start=1):
         try:
-            talep = Talep.sozlukten(veri)
+            talep = Talep.sozlukten(oge)
         except GecersizTalep as hata:
             raise GecersizTalep(f"{sira}. talep: {hata}") from hata
 
-        if talep.id in gorulen_idler:
+        if talep.id in gorulen:
             raise GecersizTalep(f"{sira}. talep: tekrarlanan id: {talep.id}")
 
-        gorulen_idler.add(talep.id)
+        gorulen.add(talep.id)
         talepler.append(talep)
 
     return talepler

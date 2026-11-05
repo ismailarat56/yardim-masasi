@@ -153,3 +153,42 @@ def test_tekrarlanan_id(tmp_path):
     with pytest.raises(GecersizTalep) as bilgi:
         talepleri_oku(yol)
     assert str(bilgi.value) == "3. talep: tekrarlanan id: 1"
+
+
+ORNEK_JSONL = ORNEK.with_suffix(".jsonl")
+
+
+def jsonl_dosyasi(tmp_path, *satirlar):
+    yol = tmp_path / "talepler.jsonl"
+    yol.write_text("\n".join(satirlar) + "\n", encoding="utf-8")
+    return yol
+
+
+def test_jsonl_ornegi_json_ornegiyle_ayni():
+    assert talepleri_oku(ORNEK_JSONL) == talepleri_oku(ORNEK)
+
+
+def test_jsonl_bos_satirlari_atlar(tmp_path):
+    yol = jsonl_dosyasi(tmp_path, json.dumps(gecerli(id=1)), "", json.dumps(gecerli(id=2)))
+    assert [talep.id for talep in talepleri_oku(yol)] == [1, 2]
+
+
+def test_jsonl_bozuk_satir(tmp_path):
+    yol = jsonl_dosyasi(tmp_path, json.dumps(gecerli(id=1)), '{"id": 2,')
+    with pytest.raises(TalepDosyasiHatasi) as bilgi:
+        talepleri_oku(yol)
+    assert str(bilgi.value) == f"geçerli JSON değil: {yol} (satır 2, sütun 10)"
+
+
+def test_jsonl_olmayan_dosya(tmp_path):
+    yol = tmp_path / "yok.jsonl"
+    with pytest.raises(TalepDosyasiHatasi) as bilgi:
+        talepleri_oku(yol)
+    assert str(bilgi.value) == f"dosya bulunamadı: {yol}"
+
+
+def test_jsonl_tekrarlanan_id(tmp_path):
+    yol = jsonl_dosyasi(tmp_path, json.dumps(gecerli(id=1)), json.dumps(gecerli(id=1)))
+    with pytest.raises(GecersizTalep) as bilgi:
+        talepleri_oku(yol)
+    assert str(bilgi.value) == "2. talep: tekrarlanan id: 1"

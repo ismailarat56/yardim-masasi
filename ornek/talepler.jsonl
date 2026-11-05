@@ -1,0 +1,12 @@
+{"id":1,"baslik":"Giriş yapamıyorum","durum":"acik","oncelik":"yuksek","etiketler":["hesap","giris"],"musteri":"ayse@example.com"}
+{"id":2,"baslik":"Fatura adresim yanlış görünüyor","durum":"kapali","oncelik":"orta","etiketler":["fatura"],"musteri":"mehmet@example.com"}
+{"id":3,"baslik":"Şifre sıfırlama e-postası gelmiyor","durum":"acik","oncelik":"yuksek","etiketler":["hesap"],"musteri":"zeynep@example.com"}
+{"id":4,"baslik":"Ödeme iki kez çekildi","durum":"beklemede","oncelik":"yuksek","etiketler":["odeme","fatura"],"musteri":"ayse@example.com"}
+{"id":5,"baslik":"Profil fotoğrafı yüklenmiyor","durum":"acik","oncelik":"dusuk","etiketler":["hesap"],"musteri":"can@example.com"}
+{"id":6,"baslik":"İade talebimin durumu","durum":"beklemede","oncelik":"orta","etiketler":["odeme"],"musteri":"mehmet@example.com"}
+{"id":7,"baslik":"Fatura gelmedi","durum":"acik","oncelik":"orta","etiketler":["fatura"],"musteri":"elif@example.com"}
+{"id":8,"baslik":"Uygulama açılışta donuyor","durum":"kapali","oncelik":"yuksek","etiketler":["uygulama"],"musteri":"can@example.com"}
+{"id":9,"baslik":"Karanlık mod isteği","durum":"beklemede","oncelik":"dusuk","etiketler":[],"musteri":"zeynep@example.com"}
+{"id":10,"baslik":"Giriş kodu SMS ile gelmiyor","durum":"acik","oncelik":"yuksek","etiketler":["hesap","giris"],"musteri":"burak@example.com"}
+{"id":11,"baslik":"Faturada vergi numarası eksik","durum":"acik","oncelik":"orta","etiketler":["fatura"],"musteri":"elif@example.com"}
+{"id":12,"baslik":"Aboneliğimi iptal etmek istiyorum","durum":"beklemede","oncelik":"dusuk","etiketler":["hesap","odeme"],"musteri":"ayse@example.com"}
