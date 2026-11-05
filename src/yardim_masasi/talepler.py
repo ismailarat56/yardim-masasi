@@ -1,8 +1,9 @@
 import sys
 from pathlib import Path
 
+from yardim_masasi.depo import TalepDeposu
 from yardim_masasi.metin import kisalt, kucuk_harf
-from yardim_masasi.model import Talep, TalepHatasi, talepleri_oku
+from yardim_masasi.model import Talep, TalepHatasi
 
 DURUMLAR = ("acik", "beklemede", "kapali")
 ONCELIK_SIRASI = {"yuksek": 0, "orta": 1, "dusuk": 2}
@@ -61,12 +62,12 @@ def main() -> None:
         sys.exit(2)
     yol = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("ornek/talepler.json")
     try:
-        talepler = talepleri_oku(yol)
+        depo = TalepDeposu.dosyadan(yol)
     except TalepHatasi as hata:
         print(f"talep-ozeti: {hata}", file=sys.stderr)
         sys.exit(1)
-    sayilar = durum_sayilari(talepler)
+    sayilar = durum_sayilari(depo)
     print(", ".join(f"{durum}: {sayi}" for durum, sayi in sayilar.items()))
     print()
-    for talep in oncelik_sirasi(kapanmamislar(talepler)):
+    for talep in oncelik_sirasi(kapanmamislar(depo)):
         print(ozet_satiri(talep))
