@@ -29,12 +29,14 @@ uv sync --locked
     uv run yardim-masasi httpx fastapi
     uv run talep-ozeti
     uv run talep-ozeti ornek/talepler.json
+    uv run talep-ozeti ornek/talepler.jsonl
+    uv run python -m yardim_masasi httpx
 
 `talep-ozeti`'ne dosya verilmezse `ornek/talepler.json` okunur.
 
 ## Talep Dosyası
 
-Bir JSON listesi; her talep şu alanları taşır:
+Bir JSON listesi (`.json`) ya da her satırında bir talep olan bir JSON Lines dosyası (`.jsonl`). Hangisi olduğu dosyanın uzantısından anlaşılır; `.jsonl` dosyasındaki boş satırlar atlanır. Her talep şu alanları taşır:
 
     id          sayı
     baslik      metin
@@ -52,6 +54,19 @@ Bir JSON listesi; her talep şu alanları taşır:
     0   özet yazıldı
     1   dosya okunamadı ya da bir talep geçersiz
     2   yanlış kullanım (birden çok dosya verildi)
+
+## Kod Düzeni
+
+`src/yardim_masasi/` altında:
+
+    model.py      Talep, Durum, Oncelik ve hata sınıfları; dosyayı okuyup her talebi doğrular
+    akis.py       üreteçler: satır satır okuma, JSON Lines, parçalara bölme
+    araclar.py    yeniden_dene dekoratörü
+    depo.py       TalepDeposu: talepleri numarasıyla, eklendikleri sırayla tutar
+    talepler.py   sayma, sıralama ve arama fonksiyonları; talep-ozeti komutu
+    metin.py      Türkçe metin yardımcıları
+    pypi.py       PyPI'dan paket bilgisi; yardim-masasi komutu __init__.py'de
+    __main__.py   python -m yardim_masasi için
 
 ## Ortam Değişkenleri
 
@@ -127,9 +142,9 @@ Mevcut 52 testin beşi PyPI özetini ve zaman aşımı ayarını, 13'ü metin ya
 
 ## Bilinen Sınırlamalar
 
-- Bulunamayan paket, bağlantı sorunu veya zaman aşımı için kullanıcıya özel hata mesajı yoktur; Python hata izi gösterilir. Bir sorgu hata verirse sonraki paketlere geçilmez.
+- Bağlantı ve zaman aşımı hataları yarım saniye arayla iki kez daha denenir. Yine olmazsa ya da paket bulunamazsa düzgün bir mesaj yok; Python'un hata izi basılır.
 - `PYPI_ZAMAN_ASIMI` sayıya çevrilemiyorsa `ValueError` oluşur. Değer aralığı için ayrıca doğrulama yapılmaz.
-- Yardım ekranı, seçenek ayrıştırma, önbellek ve otomatik yeniden deneme bulunmaz.
+- Yardım ekranı, seçenek ayrıştırma ve önbellek bulunmaz.
 - Bağımlılıklar için otomatik güvenlik açığı taraması yapılandırılmamıştır.
 - Varsayılan `ornek/talepler.json` yolu komutun çalıştırıldığı klasöre göredir; proje kökünden başka bir klasörde "dosya bulunamadı" der.
 - Talep dosyası UTF-8 değilse düzgün bir mesaj yok; Python'un hata izi basılır.
