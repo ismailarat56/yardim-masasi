@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -33,6 +34,22 @@ class Oncelik(StrEnum):
 ZORUNLU_ALANLAR = ("id", "baslik", "durum", "oncelik", "musteri")
 
 
+def _zaman_coz(deger: object) -> datetime | None:
+    if deger is None:
+        return None
+    if not isinstance(deger, str):
+        raise GecersizTalep(f"acildi metin olmalı: {deger!r}")
+
+    try:
+        zaman = datetime.fromisoformat(deger)
+    except ValueError:
+        raise GecersizTalep(f"geçersiz acildi: {deger!r}") from None
+
+    if zaman.utcoffset() is None:
+        raise GecersizTalep(f"acildi saat dilimi içermeli: {deger!r}")
+    return zaman
+
+
 @dataclass(frozen=True)
 class Talep:
     id: int
@@ -41,6 +58,7 @@ class Talep:
     oncelik: Oncelik
     musteri: str
     etiketler: tuple[str, ...] = ()
+    acildi: datetime | None = None
 
     @classmethod
     def sozlukten(cls, veri: dict) -> Talep:
@@ -83,6 +101,7 @@ class Talep:
             oncelik=oncelik,
             musteri=veri["musteri"],
             etiketler=tuple(etiketler),
+            acildi=_zaman_coz(veri.get("acildi")),
         )
 
 
