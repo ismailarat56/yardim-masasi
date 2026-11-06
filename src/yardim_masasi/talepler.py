@@ -1,11 +1,19 @@
+import argparse
+import logging
 import sys
 from collections import Counter, defaultdict
+from datetime import timedelta
+from importlib.metadata import version
 from pathlib import Path
 
 from yardim_masasi.depo import TalepDeposu
+from yardim_masasi.filtre import filtrele
 from yardim_masasi.metin import kisalt, kucuk_harf
-from yardim_masasi.model import Durum, Talep, TalepHatasi
+from yardim_masasi.model import Durum, Oncelik, Talep, TalepHatasi
 
+log = logging.getLogger(__name__)
+
+VARSAYILAN_DOSYA = Path("ornek/talepler.json")
 DURUMLAR = ("acik", "beklemede", "kapali")
 ONCELIK_SIRASI = {"yuksek": 0, "orta": 1, "dusuk": 2}
 
@@ -56,18 +64,61 @@ def ozet_satiri(talep: Talep) -> str:
     )
 
 
-def main() -> None:
-    if len(sys.argv) > 2:
-        print("kullanım: talep-ozeti [dosya]", file=sys.stderr)
-        sys.exit(2)
-    yol = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("ornek/talepler.json")
+def pozitif_tam_sayi(metin: str) -> int:
     try:
-        depo = TalepDeposu.dosyadan(yol)
+        sayi = int(metin)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"tam sayı bekleniyor: {metin!r}") from None
+    if sayi < 1:
+        raise argparse.ArgumentTypeError(f"en az 1 olmalı: {metin!r}")
+    return sayi
+
+
+def arguman_ayristirici() -> argparse.ArgumentParser:
+    ayristirici = argparse.ArgumentParser(
+        prog="talep-ozeti",
+        description="Talep dosyasını özetler: durum sayıları ve kapanmamış talepler.",
+    )
+    ayristirici.add_argument(
+        "dosya",
+        nargs="?",
+        type=Path,
+        default=VARSAYILAN_DOSYA,
+        help="okunacak .json ya da .jsonl dosyası (varsayılan: %(default)s)",
+    )
+    ayristirici.add_argument("--durum", type=Durum, choices=list(Durum), help="yalnızca bu durumdakiler")
+    ayristirici.add_argument("--oncelik", type=Oncelik, choices=list(Oncelik), help="yalnızca bu öncelikteki talepler")
+    ayristirici.add_argument("--etiket", help="yalnızca bu etiketi taşıyanlar")
+    ayristirici.add_argument("--son-gun", type=pozitif_tam_sayi, metavar="N", help="yalnızca son N günde açılanlar")
+    ayristirici.add_argument("-v", "--ayrintili", action="store_true", help="ayrıntılı günlük kayıtlarını stderr'e yaz")
+    ayristirici.add_argument("--version", action="version", version=f"%(prog)s {version('yardim-masasi')}")
+    return ayristirici
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = arguman_ayristirici().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.ayrintili else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    try:
+        depo = TalepDeposu.dosyadan(args.dosya)
     except TalepHatasi as hata:
         print(f"talep-ozeti: {hata}", file=sys.stderr)
-        sys.exit(1)
-    sayilar = durum_sayilari(depo)
+        return 1
+    log.debug("%d talep okundu", len(depo))
+    secilenler = filtrele(
+        depo,
+        durum=args.durum,
+        oncelik=args.oncelik,
+        etiket=args.etiket,
+        son=timedelta(days=args.son_gun) if args.son_gun is not None else None,
+    )
+    log.debug("Filtre sonrası %d talep kaldı", len(secilenler))
+    sayilar = durum_sayilari(secilenler)
     print(", ".join(f"{durum}: {sayi}" for durum, sayi in sayilar.items()))
     print()
-    for talep in oncelik_sirasi(kapanmamislar(depo)):
+    listelenecekler = kapanmamislar(secilenler) if args.durum is None else secilenler
+    for talep in oncelik_sirasi(listelenecekler):
         print(ozet_satiri(talep))
+    return 0
