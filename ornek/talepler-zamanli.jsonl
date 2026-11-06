@@ -1,0 +1,12 @@
+{"id": 1, "baslik": "Giriş yapamıyorum", "durum": "acik", "oncelik": "yuksek", "etiketler": ["hesap", "giris"], "musteri": "ayse@example.com", "acildi": "2026-10-21T10:00:00+03:00"}
+{"id": 2, "baslik": "Fatura adresim yanlış görünüyor", "durum": "kapali", "oncelik": "orta", "etiketler": ["fatura"], "musteri": "mehmet@example.com", "acildi": "2026-10-22T11:00:00+03:00"}
+{"id": 3, "baslik": "Şifre sıfırlama e-postası gelmiyor", "durum": "acik", "oncelik": "yuksek", "etiketler": ["hesap"], "musteri": "zeynep@example.com", "acildi": "2026-10-23T12:00:00+03:00"}
+{"id": 4, "baslik": "Ödeme iki kez çekildi", "durum": "beklemede", "oncelik": "yuksek", "etiketler": ["odeme", "fatura"], "musteri": "ayse@example.com", "acildi": "2026-10-24T13:00:00+03:00"}
+{"id": 5, "baslik": "Profil fotoğrafı yüklenmiyor", "durum": "acik", "oncelik": "dusuk", "etiketler": ["hesap"], "musteri": "can@example.com", "acildi": "2026-10-25T09:00:00+03:00"}
+{"id": 6, "baslik": "İade talebimin durumu", "durum": "beklemede", "oncelik": "orta", "etiketler": ["odeme"], "musteri": "mehmet@example.com", "acildi": "2026-10-26T10:00:00+03:00"}
+{"id": 7, "baslik": "Fatura gelmedi", "durum": "acik", "oncelik": "orta", "etiketler": ["fatura"], "musteri": "elif@example.com", "acildi": "2026-10-27T11:00:00+03:00"}
+{"id": 8, "baslik": "Uygulama açılışta donuyor", "durum": "kapali", "oncelik": "yuksek", "etiketler": ["uygulama"], "musteri": "can@example.com", "acildi": "2026-10-28T12:00:00+03:00"}
+{"id": 9, "baslik": "Karanlık mod isteği", "durum": "beklemede", "oncelik": "dusuk", "etiketler": [], "musteri": "zeynep@example.com", "acildi": "2026-10-29T13:00:00+03:00"}
+{"id": 10, "baslik": "Giriş kodu SMS ile gelmiyor", "durum": "acik", "oncelik": "yuksek", "etiketler": ["hesap", "giris"], "musteri": "burak@example.com", "acildi": "2026-10-30T09:00:00+03:00"}
+{"id": 11, "baslik": "Faturada vergi numarası eksik", "durum": "acik", "oncelik": "orta", "etiketler": ["fatura"], "musteri": "elif@example.com", "acildi": "2026-10-31T10:00:00+03:00"}
+{"id": 12, "baslik": "Aboneliğimi iptal etmek istiyorum", "durum": "beklemede", "oncelik": "dusuk", "etiketler": ["hesap", "odeme"], "musteri": "ayse@example.com", "acildi": "2026-11-01T11:00:00+03:00"}
