@@ -1,9 +1,10 @@
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from yardim_masasi.depo import TalepDeposu
 from yardim_masasi.metin import kisalt, kucuk_harf
-from yardim_masasi.model import Talep, TalepHatasi
+from yardim_masasi.model import Durum, Talep, TalepHatasi
 
 DURUMLAR = ("acik", "beklemede", "kapali")
 ONCELIK_SIRASI = {"yuksek": 0, "orta": 1, "dusuk": 2}
@@ -14,17 +15,16 @@ def kapanmamislar(talepler: list[Talep]) -> list[Talep]:
 
 
 def durum_sayilari(talepler: list[Talep]) -> dict[str, int]:
-    return {
-        durum: sum(1 for talep in talepler if talep.durum == durum)
-        for durum in DURUMLAR
-    }
+    sayac = Counter({durum: 0 for durum in Durum})
+    sayac.update(t.durum for t in talepler)
+    return {durum: sayac[durum] for durum in DURUMLAR}
 
 
 def etiket_gruplari(talepler: list[Talep]) -> dict[str, list[int]]:
-    gruplar: dict[str, list[int]] = {}
+    gruplar: defaultdict[str, list[int]] = defaultdict(list)
     for talep in talepler:
         for etiket in talep.etiketler:
-            gruplar.setdefault(etiket, []).append(talep.id)
+            gruplar[etiket].append(talep.id)
     return {etiket: gruplar[etiket] for etiket in sorted(gruplar)}
 
 
