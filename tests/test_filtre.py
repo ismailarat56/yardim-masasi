@@ -82,7 +82,7 @@ def test_ureteci_de_kabul_eder():
 
 def test_filtreler_konumsal_verilemez():
     with pytest.raises(TypeError):
-        filtrele(TALEPLER, Durum.ACIK)
+        filtrele(TALEPLER, Durum.ACIK)  # pyright: ignore[reportCallIssue]
 
 
 def test_naive_simdi_reddedilir():

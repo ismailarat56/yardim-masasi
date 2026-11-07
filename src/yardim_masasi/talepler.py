@@ -2,6 +2,7 @@ import argparse
 import logging
 import sys
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from datetime import timedelta
 from importlib.metadata import version
 from pathlib import Path
@@ -18,17 +19,17 @@ DURUMLAR = ("acik", "beklemede", "kapali")
 ONCELIK_SIRASI = {"yuksek": 0, "orta": 1, "dusuk": 2}
 
 
-def kapanmamislar(talepler: list[Talep]) -> list[Talep]:
+def kapanmamislar(talepler: Iterable[Talep]) -> list[Talep]:
     return [talep for talep in talepler if talep.durum != "kapali"]
 
 
-def durum_sayilari(talepler: list[Talep]) -> dict[str, int]:
+def durum_sayilari(talepler: Iterable[Talep]) -> dict[Durum, int]:
     sayac = Counter({durum: 0 for durum in Durum})
     sayac.update(t.durum for t in talepler)
-    return {durum: sayac[durum] for durum in DURUMLAR}
+    return {durum: sayac[durum] for durum in Durum}
 
 
-def etiket_gruplari(talepler: list[Talep]) -> dict[str, list[int]]:
+def etiket_gruplari(talepler: Iterable[Talep]) -> dict[str, list[int]]:
     gruplar: defaultdict[str, list[int]] = defaultdict(list)
     for talep in talepler:
         for etiket in talep.etiketler:
@@ -36,14 +37,14 @@ def etiket_gruplari(talepler: list[Talep]) -> dict[str, list[int]]:
     return {etiket: gruplar[etiket] for etiket in sorted(gruplar)}
 
 
-def oncelik_sirasi(talepler: list[Talep]) -> list[Talep]:
+def oncelik_sirasi(talepler: Iterable[Talep]) -> list[Talep]:
     return sorted(
         talepler,
         key=lambda talep: (ONCELIK_SIRASI[talep.oncelik], talep.id),
     )
 
 
-def ara(talepler: list[Talep], *kelimeler: str, durum: str | None = None) -> list[int]:
+def ara(talepler: Iterable[Talep], *kelimeler: str, durum: str | None = None) -> list[int]:
     kucuk_kelimeler = [kucuk_harf(kelime) for kelime in kelimeler]
     bulunanlar = []
     for talep in talepler:

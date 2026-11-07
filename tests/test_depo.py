@@ -109,7 +109,7 @@ def test_acik_sayisi():
 def test_acik_sayisi_atanamaz():
     depo = TalepDeposu()
     with pytest.raises(AttributeError):
-        depo.acik_sayisi = 3
+        depo.acik_sayisi = 3  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def test_durumdakiler():

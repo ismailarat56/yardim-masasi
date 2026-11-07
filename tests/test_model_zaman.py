@@ -28,11 +28,13 @@ def test_acildi_yoksa_none():
 def test_acildi_saat_dilimiyle_okunur():
     talep = Talep.sozlukten(veri(acildi="2026-11-02T09:30:00+03:00"))
     assert talep.acildi == datetime(2026, 11, 2, 6, 30, tzinfo=timezone.utc)
+    assert talep.acildi is not None
     assert talep.acildi.utcoffset() == timedelta(hours=3)
 
 
 def test_z_utc_demek():
     talep = Talep.sozlukten(veri(acildi="2026-11-02T06:30:00Z"))
+    assert talep.acildi is not None
     assert talep.acildi.utcoffset() == timedelta(0)
 
 
