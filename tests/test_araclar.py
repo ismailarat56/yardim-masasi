@@ -12,7 +12,7 @@ def beklemeler(monkeypatch):
     return kayit
 
 
-def bozuk(hata_sayisi, hata=ConnectionError):
+def bozuk(hata_sayisi, hata: type[Exception] = ConnectionError):
     cagrilar = []
 
     def fonk(*args, **kwargs):
