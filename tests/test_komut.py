@@ -3,6 +3,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
+from pathlib import Path
 
 import pytest
 
@@ -129,20 +130,20 @@ def test_version_dosya_okumadan_surum_yazar(capsys):
     assert capsys.readouterr().out == f"talep-ozeti {version('yardim-masasi')}\n"
 
 
-def test_modul_girisi_talep_yardimini_gosterir():
+def test_modul_girisi_pypi_yardimini_gosterir():
     sonuc = subprocess.run(
         [sys.executable, "-m", "yardim_masasi", "--help"],
         capture_output=True, text=True, timeout=10,
     )
     assert sonuc.returncode == 0
-    assert "usage: talep-ozeti" in sonuc.stdout
-    assert "--son-gun" in sonuc.stdout
+    assert "usage: yardim-masasi" in sonuc.stdout
+    assert "--eszamanli" in sonuc.stdout
     assert sonuc.stderr == ""
 
 
-def test_modul_girisi_dosya_hatasinda_kod_1_dondurur(tmp_path):
+def test_talep_komutu_dosya_hatasinda_kod_1_dondurur(tmp_path):
     sonuc = subprocess.run(
-        [sys.executable, "-m", "yardim_masasi", str(tmp_path / "yok.json")],
+        [str(Path(sys.executable).with_name("talep-ozeti")), str(tmp_path / "yok.json")],
         capture_output=True, text=True, timeout=10,
     )
     assert sonuc.returncode == 1
@@ -152,7 +153,7 @@ def test_modul_girisi_dosya_hatasinda_kod_1_dondurur(tmp_path):
 
 def test_ayrintili_kayitlar_stderrde_stdout_ayni_kalir(tmp_path):
     yol = dosya(tmp_path, [TALEP, {**TALEP, "id": 2, "durum": "kapali"}])
-    komut = [sys.executable, "-m", "yardim_masasi", str(yol), "--durum", "kapali"]
+    komut = [str(Path(sys.executable).with_name("talep-ozeti")), str(yol), "--durum", "kapali"]
 
     normal = subprocess.run(komut, capture_output=True, text=True, timeout=10)
     ayrintili = subprocess.run([*komut, "-v"], capture_output=True, text=True, timeout=10)

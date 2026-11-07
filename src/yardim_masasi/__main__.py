@@ -1,3 +1,3 @@
-from yardim_masasi.talepler import main
+from yardim_masasi import main
 
 raise SystemExit(main())
