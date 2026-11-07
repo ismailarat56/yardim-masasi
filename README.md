@@ -20,13 +20,14 @@ cd yardim-masasi
 uv sync --locked
 ```
 
-`uv sync --locked`, `uv.lock` dosyasındaki sürümlerle `.venv` sanal ortamını hazırlar; geliştirme bağımlılığı olan `pytest` de kurulur. Kilit dosyası proje tanımıyla uyuşmuyorsa hata verir ve kilidi değiştirmez.
+`uv sync --locked`, `uv.lock` dosyasındaki sürümlerle `.venv` sanal ortamını hazırlar; geliştirme bağımlılıkları `pytest` ve `pyright` da kurulur. Kilit dosyası proje tanımıyla uyuşmuyorsa hata verir ve kilidi değiştirmez.
 
 `.venv` Git'e dahil edilmez. Başka bir bilgisayarda aynı komutla yeniden oluşturulur. Komutları `uv run` ile çalıştırırken sanal ortamı elle etkinleştirmek gerekmez.
 
 ## Çalıştırma
 
     uv run yardim-masasi httpx fastapi
+    uv run yardim-masasi -e 2 httpx fastapi rich
     uv run talep-ozeti
     uv run talep-ozeti ornek/talepler.json
     uv run talep-ozeti ornek/talepler.jsonl
@@ -38,8 +39,36 @@ uv sync --locked
 
 `talep-ozeti`'ne dosya verilmezse `ornek/talepler.json` okunur.
 
-`python -m yardim_masasi` talep özeti komutunu çalıştırır. PyPI sorgulaması için
-`uv run yardim-masasi httpx` kullanılır.
+`uv run python -m yardim_masasi httpx`, `yardim-masasi` ile aynı PyPI
+sorgulama girişini çalıştırır. Talep özeti için `uv run talep-ozeti` kullanılır.
+
+## PyPI Sorgusu
+
+`yardim-masasi [-h] [-e N] PAKET [PAKET ...]`, en az bir paket adı ister.
+`-e N` veya `--eszamanli N`, aynı anda yürütülen sorguların üst sınırını
+belirler; varsayılanı **4** olan bu değer pozitif tam sayı olmalıdır.
+`-e 1` sorguları sırayla yürütür; `-e 2` en fazla iki sorguyu birlikte yürütür.
+
+İstekler ortak bir `httpx.AsyncClient` ile yapılır. Sonuçlar bütün işler
+tamamlandıktan sonra, yanıtların geliş sırasına göre değil komutta verilen
+paket sırasıyla yazılır. Paket özetleri stdout'a, hata mesajları stderr'e
+gider; bu iki akışı birleştiren araçların ekrandaki sıralaması tamponlama
+nedeniyle farklı görünebilir.
+
+Bağlantı ve zaman aşımı gibi taşıma hataları yarım saniye arayla iki kez
+daha denenir; ilk istekle birlikte toplam üç deneme yapılır. HTTP 404 ve
+diğer HTTP durum hataları yeniden denenmez. Bulunamayan paket diğer paketlerin
+özetlerini engellemez; taşıma hatası son denemede de sürerse kalan işler
+iptal edilir ve paket özetleri basılmadan komut hata mesajıyla sonlanır.
+
+| Çıkış kodu | Anlamı |
+| --- | --- |
+| `0` | Bütün paketler başarıyla sorgulandı veya yardım gösterildi. |
+| `1` | Paket bulunamadı (404), başka bir HTTP durum hatası oluştu veya yeniden denemelere rağmen PyPI'a ulaşılamadı. |
+| `2` | Kullanım hatası: paket adı eksik, bilinmeyen bayrak veya geçersiz/eksik `-e` değeri. |
+
+Bu ağ ve HTTP hataları hata izi yerine kısa mesajlarla bildirilir. Kullanım
+hatalarında `argparse` kullanım özetini ve açıklamayı stderr'e yazar.
 
 ## Komut Satırı
 
@@ -81,11 +110,17 @@ Talep hataları tek satırlık mesajla stderr'e yazılır. Kullanım hatalarınd
 
 ## Günlük Kayıtları
 
-`-v` veya `--ayrintili`, günlük seviyesini DEBUG yapar; dosyadan okunan ve
+`talep-ozeti` için `-v` veya `--ayrintili`, günlük seviyesini DEBUG yapar; dosyadan okunan ve
 filtrelerden sonra kalan talep sayıları görünür. Bayrak verilmezse seviye
 WARNING'dir. `yeniden_dene` yardımcısı yeniden denenecek hataları WARNING,
 son denemedeki hatayı ERROR seviyesinde kaydeder; bu kayıtlar ilgili işlem
 çalıştığında oluşur.
+
+`yardim-masasi` artık async istekleri ve `yeniden_dene_async` dekoratörünü
+kullanır; PyPI yeniden deneme kayıtları **`yardim_masasi.eszamanli`**
+kaydedicisinden gelir. Burada da yeniden denenecek hata WARNING, son hata
+ERROR seviyesindedir. Senkron `yeniden_dene` kayıtları ise
+`yardim_masasi.araclar` adını kullanmaya devam eder.
 
 Özet stdout'a, günlükler stderr'e gider. Böylece özeti başka bir komuta veya
 dosyaya aktarırken tanılama mesajları sonuç verisine karışmaz. Kütüphane
@@ -149,12 +184,14 @@ normaldir.
 
     model.py      Talep, Durum, Oncelik ve hata sınıfları; dosyayı okuyup her talebi doğrular
     akis.py       üreteçler: satır satır okuma, JSON Lines, parçalara bölme
-    araclar.py    yeniden_dene dekoratörü
+    araclar.py    ParamSpec ile çağrı imzasını koruyan senkron yeniden_dene dekoratörü
+    eszamanli.py  Semaphore ve TaskGroup ile sinirli_topla; yeniden_dene_async dekoratörü
     depo.py       TalepDeposu: talepleri numarasıyla, eklendikleri sırayla tutar
     filtre.py     durum, öncelik, etiket ve açılış zamanına göre filtreleme
     talepler.py   sayma, sıralama ve arama fonksiyonları; talep-ozeti komutu
     metin.py      Türkçe metin yardımcıları
-    pypi.py       PyPI'dan paket bilgisi; yardim-masasi komutu __init__.py'de
+    pypi.py       senkron/async paket sorguları, sınırlı eşzamanlı toplama ve özet biçimi
+    __init__.py   yardim-masasi: argümanlar, eşzamanlı sorgular ve çıkış kodları
     __main__.py   python -m yardim_masasi için
 
 ## Ortam Değişkenleri
@@ -187,13 +224,19 @@ PYPI_ZAMAN_ASIMI=2.5 uv run --locked yardim-masasi httpx
 
 ```text
 src/yardim_masasi/
-    __init__.py       Komut satırı giriş noktası; paketleri sırayla sorgular.
-    pypi.py           HTTP isteği, zaman aşımı ayarı ve çıktı biçimlendirmesi.
+    __init__.py       PyPI komutu; eşzamanlı sorguların sonuçlarını giriş sırasıyla yazar.
+    pypi.py           Senkron/async HTTP istekleri, zaman aşımı ve çıktı biçimi.
+    araclar.py        Tip imzasını koruyan senkron yeniden deneme dekoratörü.
+    eszamanli.py      Sınırlı eşzamanlı toplama ve async yeniden deneme.
     metin.py          Türkçe harf dönüşümü, etiket temizleme ve metin yardımcıları.
     model.py          Talep modeli, veri doğrulama ve dosya okuma hataları.
     talepler.py       Talep filtreleme, sıralama, arama ve özet komutu.
     filtre.py         Birleşik filtreler ve dışarıdan verilebilen referans zaman.
 tests/test_pypi.py     Özet biçimi ve ortam değişkeni testleri.
+tests/test_pypi_async.py Eşzamanlı PyPI, sıralama ve hata davranışı testleri.
+tests/test_eszamanli.py Eşzamanlılık sınırı, iptal ve async yeniden deneme testleri.
+tests/test_cli.py      PyPI komutunun çıktı ve çıkış kodu testleri.
+tests/tip_araclar.py   pyright ile dekoratör imzasının statik denetimi.
 tests/test_metin.py    Türkçe metin yardımcılarının testleri.
 tests/test_talepler.py Talep işlemlerinin testleri.
 tests/test_model.py    Talep modeli ve dosya doğrulama testleri.
@@ -207,12 +250,38 @@ uv.lock               Çözümlenmiş doğrudan ve dolaylı bağımlılıklar.
 .env.example          Paylaşılabilir ortam değişkeni örneği.
 ```
 
-Çalışma bağımlılıkları `httpx` ve `rich`, geliştirme bağımlılığı `pytest` olarak tanımlıdır. HTTP isteklerini `httpx` yapar. `rich` bağımlılıklarda bulunur, ancak mevcut çıktı düz `print` ile üretilir.
+Çalışma bağımlılıkları `httpx` ve `rich`, geliştirme bağımlılıkları `pytest` ve `pyright` olarak tanımlıdır. HTTP isteklerini `httpx` yapar. `rich` bağımlılıklarda bulunur, ancak mevcut çıktı düz `print` ile üretilir.
+
+## Tip Denetimi
+
+```bash
+uv run pyright
+```
+
+`pyproject.toml`, `src` ve `tests` dizinlerini denetime dahil eder.
+`src/yardim_masasi/araclar.py`, `src/yardim_masasi/eszamanli.py` ve
+`tests/tip_araclar.py`, başlarındaki `# pyright: strict` ile strict
+denetlenir. Diğer dosyalar pyright'ın varsayılan standard modunu kullanır.
+Tip ipuçları çalışma anında girdileri doğrulamaz; pyright kodu çalıştırmadan
+tip uyumsuzluklarını arar.
+
+`tests/tip_araclar.py`, `assert_type` ile dekoratörün dönüş tipini ve kasıtlı
+hatalı çağrılarla parametre imzasını denetler. Dosya adı pytest'in varsayılan
+`test_*.py` veya `*_test.py` kalıplarına uymaz; bu nedenle pytest tarafından
+toplanmaz. Pyright ise `tests` kapsamındaki bu dosyayı statik olarak inceler;
+içindeki hatalı çağrıları çalıştırmaz.
+
+`reportUnnecessaryTypeIgnoreComment = "error"`, artık bir tip hatasını
+bastırmayan gereksiz `ignore` yorumlarını hata sayar. Böylece dekoratörün
+tip imzası zayıflayıp yanlış çağrılar kabul edilmeye başlarsa ilgili
+`pyright: ignore[...]` satırları denetimi başarısız kılar; eski bastırma
+yorumlarının sessizce kalması da önlenir.
 
 ## Testler
 
 ```bash
 uv run --locked pytest -q
+uv run pyright
 ```
 
 Testler metin yardımcılarını, talep modelini, zaman doğrulamasını, depoyu, JSONL
@@ -235,9 +304,10 @@ deneme testleri gerçek ağ isteği yerine sahte yanıtlar ve taşıma hataları
 
 ## Bilinen Sınırlamalar
 
-- Bağlantı ve zaman aşımı hataları yarım saniye arayla iki kez daha denenir. Yine olmazsa ya da paket bulunamazsa düzgün bir mesaj yok; Python'un hata izi basılır.
+- `yardim-masasi` günlük ayarı yapmaz. Başka bir günlük yapılandırması yoksa yeniden deneme uyarıları ve son hata, logging'in yedek işleyicisiyle stderr'e zaman, seviye ve kaydedici adı olmadan çıplak mesaj olarak yazılır.
+- Büyük paket listelerinde bütün sonuçlar beklendiğinden toplam süre en yavaş yanıta da bağlıdır. Eşzamanlılık sınırı yüzünden sırada bekleyen işler ve yeniden denemeler bu süreyi uzatır; hızlı biten paketler hemen gösterilmez.
 - `PYPI_ZAMAN_ASIMI` sayıya çevrilemiyorsa `ValueError` oluşur. Değer aralığı için ayrıca doğrulama yapılmaz.
-- PyPI sorgulama komutunda yardım ekranı ve seçenek ayrıştırma bulunmaz; `talep-ozeti` bunları `argparse` ile sağlar. Önbellek bulunmaz.
+- PyPI sorguları için önbellek bulunmaz.
 - Bağımlılıklar için otomatik güvenlik açığı taraması yapılandırılmamıştır.
 - Varsayılan `ornek/talepler.json` yolu komutun çalıştırıldığı klasöre göredir; proje kökünden başka bir klasörde "dosya bulunamadı" der.
 - Talep dosyası UTF-8 değilse düzgün bir mesaj yok; Python'un hata izi basılır.
@@ -253,5 +323,8 @@ deneme testleri gerçek ağ isteği yerine sahte yanıtlar ve taşıma hataları
 [06.11.2026 günlük özeti](notes/daily-summary-06-11-2026.md), parametre türleri,
 zamanlı talepler, filtreler, argparse, logging ve testlerle ilgili çalışma
 notlarını içerir.
+
+[07.11.2026 günlük özeti](notes/daily-summary-07-11-2026.md), tip denetimi,
+generic dekoratörler, asyncio, iptal ve eşzamanlı PyPI sorgularını açıklar.
 
 Değişiklikler yerel çalışma alanında tutulur; kullanıcı açıkça istemeden commit veya GitHub'a push yapılmaz. Commit istendiğinde anlamlı işler ayrı commitlere ayrılır; push için ayrıca kullanıcının talebi gerekir.
