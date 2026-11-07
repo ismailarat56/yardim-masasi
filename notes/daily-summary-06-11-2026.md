@@ -2,6 +2,15 @@
 
 Kişisel deneyim anlatımları, mevcut kod ve testlerden hareketle hazırlanmış örnek öğrenme notlarıdır; kendi deneyimime göre uyarlayabilirim. Önceden tutulmuş kontrol kayıtları, Araştırma Notları bölümünde tarihsel bağlamıyla korunmuştur.
 
+## 07.11.2026 Başlangıç Kontrolü
+
+- `yardim-masasi-v6` mevcut; tag ve HEAD aynı commit'i gösteriyor: `116450e`.
+- `git log --oneline | wc -l`: **30**; beklenen commit sayısıyla aynı.
+- `uv run pytest -q`: **163 passed**; başarısız test yok.
+- Test sayısının nedeni, ilgili commit'lerdeki test dosyaları geçici dizinlere çıkarılıp mevcut Python ortamıyla `pytest --collect-only -q` çalıştırılarak kontrol edildi: `3715a93` üzerinde 129, argparse commit'i `e465c0f` üzerinde 144, `test_arguman.py` eklenen `8dcbe12` üzerinde 158 test toplanıyor. `680c3d2` ile eklenen 5 günlük testi toplamı 163'e getiriyor. Argüman dosyası parametrizasyon dahil 14 vaka içeriyor. Dolayısıyla eski nottaki 143, argparse commit'inin gerçek toplamından 1 eksik; bu sayının hangi ara çalışma durumunda alındığı commit geçmişinden doğrulanamıyor. 143'e göre 20 farkın 19'u iki yeni test dosyasıyla, kalan 1'i eski not ile commit arasındaki sayım farkıyla açıklanıyor. Test sayısını eşitlemek için test silinmedi.
+- Kontrol başlangıcında `git status --short` boş değildi: `?? "t -q"`. Dosya eski `uv.lock` değişikliklerinin ANSI renk kodlu diff çıktısını içeriyor; önceki kontrol notunda da aynı dosya kayıtlı. Oluşturulma nedeni doğrulanamadı ve dosya korundu. Bu kontrol kaydının eklenmesiyle bu özet dosyası da commit edilmemiş değişiklik olarak görünecek; temiz çalışma ağacı koşulu henüz sağlanmıyor.
+- Bugünkü çalışmanın dayanakları mevcut: `pozitif_tam_sayi` ve geçersiz gün değeri testleri, `yeniden_dene` WARNING/ERROR kayıtları ve `caplog` testleri. README ve bu özette `tee`, `2>&1`, `pipefail` açıklamaları bulunuyor.
+
 ## Parametre Türleri: / ve *
 
 Fonksiyon imzasında `/` işaretinden önceki parametreleri yalnızca konumuyla, tek başına duran `*` işaretinden sonrakileri yalnızca adıyla verebiliyorum. Arada kalan normal parametreleri iki biçimde de kullanabiliyorum. Örneğin `def sec(talepler, /, *, durum=None)` imzasında `sec(kayitlar, durum=Durum.ACIK)` geçerli olur. Projedeki `filtrele` yalnızca `*` kullanıyor; ilk `talepler` parametresi adla da verilebilirken `durum` gibi filtreler mutlaka adla veriliyor.

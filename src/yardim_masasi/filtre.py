@@ -31,8 +31,8 @@ def filtrele(
             return False
         if etiket is not None and etiket not in talep.etiketler:
             return False
-        if esik is not None and (talep.acildi is None or talep.acildi < esik):
-            return False
-        return True
+        return not (
+            esik is not None and (talep.acildi is None or talep.acildi < esik)
+        )
 
     return [talep for talep in talepler if uyuyor_mu(talep)]
