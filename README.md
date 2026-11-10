@@ -4,6 +4,8 @@
 
 `talep-ozeti` komutu bir JSON dosyasındaki destek taleplerini durumlarına göre sayar ve kapanmamış talepleri öncelik sırasıyla listeler. `ornek/talepler.json` on iki örnek talep içerir.
 
+Projenin üçüncü parçası, talepleri PostgreSQL'de saklayıp listeleme, okuma, oluşturma ve güncelleme işlerini HTTP üzerinden sunan bir FastAPI uygulamasıdır.
+
 Proje aynı zamanda Python yorumlayıcısı, sanal ortam, `uv`, bağımlılık yönetimi ve ortam değişkenleri üzerine bir çalışma örneğidir.
 
 ## Gerekenler
@@ -11,6 +13,7 @@ Proje aynı zamanda Python yorumlayıcısı, sanal ortam, `uv`, bağımlılık y
 - [uv](https://docs.astral.sh/uv/): Python ve proje bağımlılıklarını yönetir.
 - Python 3.15: geliştirme sürümü `.python-version` dosyasında seçilidir. `pyproject.toml` en az Python 3.15 ister. Uygun yorumlayıcı yoksa uv, otomatik indirme açıkken onu kurabilir.
 - İlk kurulumda paketleri indirmek ve kullanım sırasında PyPI'ya erişmek için internet bağlantısı.
+- [Docker](https://docs.docker.com/get-docker/) ve Docker Compose: API'nin kullandığı PostgreSQL veritabanını bir kapta çalıştırır.
 
 ## Kurulum
 
@@ -178,6 +181,79 @@ sınır koymaz. Örnekteki tarihler sabit olduğu için aynı komutun sonucu
 çalıştırıldığı güne göre değişir; bütün tarihler eskidiğinde sıfır sayımları
 normaldir.
 
+## Veritabanı
+
+PostgreSQL 18, `compose.yaml` ile bir Docker kabında çalışır ve yalnızca bu bilgisayardan, `127.0.0.1:5434` adresinden erişilebilir. Kabın kullanıcı adı, parolası ve ilk veritabanı `.env.db` dosyasından okunur:
+
+```bash
+cp .env.db.example .env.db
+docker compose up -d
+docker compose ps          # db servisi "healthy" görünmeli
+```
+
+PostgreSQL ilk açılışta yalnızca `POSTGRES_DB` içindeki `yardim_masasi` veritabanını oluşturur. Testlerin kullandığı ayrı veritabanını bir kez elle açmak gerekir:
+
+```bash
+docker compose exec db createdb -U yardim yardim_masasi_test
+```
+
+Tablo tanımı `sql/001_talepler.sql` dosyasındadır ve iki veritabanına da uygulanır:
+
+```bash
+docker compose exec -T db psql -U yardim -d yardim_masasi -v ON_ERROR_STOP=1 < sql/001_talepler.sql
+docker compose exec -T db psql -U yardim -d yardim_masasi_test -v ON_ERROR_STOP=1 < sql/001_talepler.sql
+```
+
+Testler test veritabanındaki tabloyu her testte silip bu dosyadan yeniden kurar; ikinci komut, tabloyu elle incelemek için de işe yarar.
+
+Örnek talepleri asıl veritabanına `talep-yukle` yükler. Dosya verilmezse `ornek/talepler-zamanli.jsonl` okunur:
+
+```bash
+uv run --env-file .env talep-yukle
+uv run --env-file .env talep-yukle ornek/talepler.json
+```
+
+`talep-yukle` dosyadaki numaraları korur ve bütün talepleri tek işlemde ekler; bir hata olursa hiçbiri eklenmez. Tabloda zaten talep varsa hiçbir şey eklemez, `talep-yukle: tablo boş değil (12 talep var)` gibi bir mesajı stderr'e yazar ve `1` koduyla biter. Ekleme bittikten sonra `id` sütununun numara sayacını tablodaki en büyük numaraya ayarlar; böylece API ile oluşturulan ilk talep bir sonraki numarayı alır ve var olan bir numarayla çakışmaz.
+
+Tabloyu boşaltıp sayacı sıfırlamak ve örnekleri yeniden yüklemek için:
+
+```bash
+docker compose exec db psql -U yardim -d yardim_masasi -c "TRUNCATE talepler RESTART IDENTITY"
+uv run --env-file .env talep-yukle
+```
+
+`docker compose down` kabı durdurur, veriler `db-data` biriminde kalır. `docker compose down -v` birimi de siler; bir sonraki `up` boş bir veritabanıyla başlar ve test veritabanını açma ile tablo kurma adımları yeniden gerekir.
+
+## API
+
+```bash
+uv run --env-file .env fastapi dev src/yardim_masasi/api.py
+```
+
+Sunucu `http://127.0.0.1:8000` adresinde açılır ve kod değiştikçe kendini yeniden başlatır. Başlarken bağlantı havuzunu açar; `DATABASE_URL` tanımlı değilse ya da veritabanına beş saniye içinde bağlanılamazsa başlamaz. `http://127.0.0.1:8000/docs`, uçları tarayıcıdan denemeye yarayan otomatik belgeyi gösterir.
+
+| Uç | İşlev | Başarı | Hata kodları |
+| --- | --- | --- | --- |
+| `GET /saglik` | Veritabanına `SELECT 1` gönderir. | `200` `{"durum": "ok"}` | `500` veritabanına ulaşılamazsa |
+| `GET /talepler` | Talepleri numara sırasıyla listeler; `durum`, `oncelik` ve `etiket` sorgu parametreleriyle süzer. | `200` | `422` bilinmeyen durum veya öncelik |
+| `GET /talepler/ozet` | Her durumdaki talep sayısını verir; talebi olmayan durum `0` görünür. | `200` | — |
+| `GET /talepler/{talep_id}` | Tek talebi verir. | `200` | `404` talep yok, `422` numara pozitif tam sayı değil |
+| `POST /talepler` | Yeni talep oluşturur; durum her zaman `acik`, öncelik verilmezse `orta` olur. | `201` | `401` anahtar, `422` geçersiz gövde |
+| `PATCH /talepler/{talep_id}` | Durumu, önceliği ya da ikisini değiştirir. | `200` | `401` anahtar, `404` talep yok, `422` geçersiz veya boş gövde |
+
+Okuma uçları açıktır. `POST` ve `PATCH`, `X-API-Anahtari` başlığında sunucudaki `API_ANAHTARI` değerinin aynısını ister. Başlık yoksa, değer yanlışsa ya da sunucuda `API_ANAHTARI` hiç tanımlı değilse istek `401` alır ve hiçbir şey değişmez; anahtar ayarlanmamış bir sunucuda yazma tamamen kapalıdır.
+
+Gövdeler Pydantic şemalarıyla doğrulanır. Başlık boşlukları temizlendikten sonra 3–200 karakter, `musteri` tek `@` içeren bir adres, her etiket 1–30 karakter olmalıdır. Şemada bulunmayan bir alan, örneğin oluştururken gönderilen `durum` ya da `id`, sessizce yok sayılmaz; istek `422` ve `extra_forbidden` hatası alır.
+
+```bash
+curl -i -X POST http://127.0.0.1:8000/talepler \
+  -H "Content-Type: application/json" \
+  -H "X-API-Anahtari: gelistirme-anahtari" \
+  -d '{"baslik": "Fatura indirilemiyor", "musteri": "ali@example.com", "oncelik": "yuksek", "etiketler": ["fatura"]}'
+```
+
+Yanıt `201 Created` ve veritabanının verdiği numara, durum ve açılış zamanıyla oluşan talebin JSON'udur.
+
 ## Kod Düzeni
 
 `src/yardim_masasi/` altında:
@@ -193,6 +269,15 @@ normaldir.
     pypi.py       senkron/async paket sorguları, sınırlı eşzamanlı toplama ve özet biçimi
     __init__.py   yardim-masasi: argümanlar, eşzamanlı sorgular ve çıkış kodları
     __main__.py   python -m yardim_masasi için
+    veritabani.py DATABASE_URL okuma; örnekleri yükleyip numara sayacını ayarlayan talep-yukle komutu
+    pg_depo.py    PgTalepDeposu: bağlantı havuzu üzerinden getir, ekle, listele, güncelle ve durum sayıları
+    sema.py       API gövdeleri ve yanıtı için Pydantic şemaları: TalepOlustur, TalepGuncelle, TalepCevap
+    api.py        FastAPI uygulaması: lifespan ile bağlantı havuzu, altı uç ve API anahtarı denetimi
+
+Proje kökünde:
+
+    sql/001_talepler.sql  talepler tablosu, kısıtları ve durum indeksi
+    compose.yaml          PostgreSQL 18 kabı, 127.0.0.1:5434 portu, db-data birimi ve sağlık denetimi
 
 ## Ortam Değişkenleri
 
@@ -205,6 +290,11 @@ cp .env.example .env
 | Değişken | Varsayılan | Açıklama |
 | --- | --- | --- |
 | `PYPI_ZAMAN_ASIMI` | `10` | HTTP isteğinin zaman aşımı ayarı, saniye cinsinden. `2.5` gibi ondalık değerler kullanılabilir. |
+| `DATABASE_URL` | yok | API'nin ve `talep-yukle`'nin bağlandığı veritabanı, ör. `postgresql://yardim:yardim@127.0.0.1:5434/yardim_masasi`. Tanımlı değilse ikisi de çalışmaz. |
+| `TEST_DATABASE_URL` | yok | PostgreSQL depo testlerinin veritabanı. Adres `yardim_masasi_test` veritabanını göstermelidir; başka bir veritabanında testler tabloyu silmeden başarısız olur. Tanımlı değilse bu testler atlanır. |
+| `API_ANAHTARI` | yok | `POST` ve `PATCH` için beklenen `X-API-Anahtari` değeri. Tanımlı değilse yazma uçları her isteğe `401` döner. |
+
+Kabın kendi ayarları ayrı bir dosyadadır: `.env.db`, `POSTGRES_USER`, `POSTGRES_PASSWORD` ve `POSTGRES_DB` değerlerini taşır ve `.env.db.example`'dan kopyalanır. PostgreSQL bu değerleri yalnızca veri birimi boşken, ilk açılışta kullanır; sonradan değiştirmek var olan kullanıcının parolasını değiştirmez. Bağlantı adreslerindeki kullanıcı adı ve parola bu dosyadakilerle aynı olmalıdır.
 
 uv `.env` dosyasını kendiliğinden okumaz; dosyayı açıkça belirt:
 
@@ -218,7 +308,7 @@ Dosya oluşturmadan tek komuta değer vermek de mümkündür (Bash):
 PYPI_ZAMAN_ASIMI=2.5 uv run --locked yardim-masasi httpx
 ```
 
-`.env` Git'e dahil edilmez; paylaşılabilir ayar örnekleri `.env.example` içinde tutulur.
+`.env` ve `.env.db` Git'e dahil edilmez; paylaşılabilir ayar örnekleri `.env.example` ve `.env.db.example` içinde tutulur.
 
 ## Proje Yapısı
 
@@ -232,6 +322,15 @@ src/yardim_masasi/
     model.py          Talep modeli, veri doğrulama ve dosya okuma hataları.
     talepler.py       Talep filtreleme, sıralama, arama ve özet komutu.
     filtre.py         Birleşik filtreler ve dışarıdan verilebilen referans zaman.
+    veritabani.py     Bağlantı adresi ve talep-yukle komutu.
+    pg_depo.py        PostgreSQL talep deposu.
+    sema.py           API istek ve yanıt şemaları.
+    api.py            FastAPI uygulaması ve uçlar.
+sql/001_talepler.sql  talepler tablosunun tanımı.
+tests/conftest.py      Async testler için anyio_backend ayarı.
+tests/sahte_depo.py    PgTalepDeposu ile aynı sözleşmeyi uygulayan bellek deposu.
+tests/test_depo_sozlesme.py Aynı depo testlerini bellekte ve PostgreSQL'de koşturur.
+tests/test_api.py      Uçların durum kodu, doğrulama ve anahtar testleri.
 tests/test_pypi.py     Özet biçimi ve ortam değişkeni testleri.
 tests/test_pypi_async.py Eşzamanlı PyPI, sıralama ve hata davranışı testleri.
 tests/test_eszamanli.py Eşzamanlılık sınırı, iptal ve async yeniden deneme testleri.
@@ -244,13 +343,15 @@ tests/test_komut.py    Özet komutunun çıktı ve hata akışı testleri.
 ornek/talepler.json    On iki örnek destek talebi.
 ornek/talepler-zamanli.jsonl Açılış zamanı içeren on iki örnek talep.
 notes/                Günlük öğrenme ve çalışma notları.
+compose.yaml          PostgreSQL kabının tanımı.
 pyproject.toml        Proje tanımı, bağımlılıklar ve komutun giriş noktası.
 uv.lock               Çözümlenmiş doğrudan ve dolaylı bağımlılıklar.
 .python-version       Geliştirmede seçilen Python sürümü.
 .env.example          Paylaşılabilir ortam değişkeni örneği.
+.env.db.example       PostgreSQL kabı için örnek ayarlar.
 ```
 
-Çalışma bağımlılıkları `httpx` ve `rich`, geliştirme bağımlılıkları `pytest` ve `pyright` olarak tanımlıdır. HTTP isteklerini `httpx` yapar. `rich` bağımlılıklarda bulunur, ancak mevcut çıktı düz `print` ile üretilir.
+Çalışma bağımlılıkları `httpx`, `rich`, `fastapi[standard]`, `psycopg[binary]` ve `psycopg-pool`; geliştirme bağımlılıkları `pytest` ve `pyright` olarak tanımlıdır. HTTP isteklerini `httpx` yapar. `rich` bağımlılıklarda bulunur, ancak mevcut çıktı düz `print` ile üretilir.
 
 ## Tip Denetimi
 
@@ -280,9 +381,13 @@ yorumlarının sessizce kalması da önlenir.
 ## Testler
 
 ```bash
-uv run --locked pytest -q
+uv run --locked --env-file .env pytest -q
 uv run pyright
 ```
+
+`--env-file .env` verilmezse `TEST_DATABASE_URL` tanımlı olmaz ve `test_depo_sozlesme.py` içindeki `[pg]` testleri atlanır; çıktıda `skipped` olarak görünürler. Aynı testlerin `[bellek]` kopyaları yine çalışır. PostgreSQL testleri için veritabanı kabının açık ve `yardim_masasi_test` veritabanının oluşturulmuş olması gerekir; tabloyu her test kendisi yeniden kurar.
+
+`test_depo_sozlesme.py`, aynı sözleşme testlerini hem `BellekDeposu` hem `PgTalepDeposu` üzerinde çalıştırarak iki deponun aynı davrandığını doğrular. `test_api.py` veritabanı kullanmaz: `TestClient` lifespan'ı çalıştırmadığı için bağlantı havuzu açılmaz ve `app.dependency_overrides` ile `depo_al` yerine bellek deposu verilir. Bu testler Docker kapalıyken de geçer.
 
 Testler metin yardımcılarını, talep modelini, zaman doğrulamasını, depoyu, JSONL
 akışını, filtreleri ve komutun çıktı/çıkış kodlarını kontrol eder. PyPI yeniden
@@ -311,6 +416,10 @@ deneme testleri gerçek ağ isteği yerine sahte yanıtlar ve taşıma hataları
 - Bağımlılıklar için otomatik güvenlik açığı taraması yapılandırılmamıştır.
 - Varsayılan `ornek/talepler.json` yolu komutun çalıştırıldığı klasöre göredir; proje kökünden başka bir klasörde "dosya bulunamadı" der.
 - Talep dosyası UTF-8 değilse düzgün bir mesaj yok; Python'un hata izi basılır.
+- Tablo bir migration aracı olmadan, `sql/001_talepler.sql` elle uygulanarak kuruluyor. Hangi şema dosyasının hangi veritabanına uygulandığı kaydedilmiyor; şema değişikliklerini sırayla uygulamak elle yapılıyor.
+- API çalışırken veritabanı kapanırsa havuzdaki kopuk bağlantıyı alan ilk istek hemen `500` alır. Havuz yeni bağlantı kuramadığı için sonraki istekler bağlantı beklerken havuzun 30 saniyelik zaman aşımına kadar bekler ve sonra `500` alır. `/saglik` de aynı biçimde davranır.
+- API anahtarı tek ve herkesin paylaştığı bir değer. Kullanıcı ayrımı yok; bir talebi kimin oluşturduğu ya da değiştirdiği kaydedilmiyor. Anahtarı değiştirmek sunucuyu yeni ortam değişkeniyle yeniden başlatmayı gerektiriyor.
+- `GET /talepler` sayfalama yapmıyor; eşleşen bütün talepleri tek yanıtta döndürüyor. Talep sayısı arttıkça yanıt büyüyor.
 
 ## Çalışma Notları ve Git Akışı
 
@@ -326,5 +435,8 @@ notlarını içerir.
 
 [07.11.2026 günlük özeti](notes/daily-summary-07-11-2026.md), tip denetimi,
 generic dekoratörler, asyncio, iptal ve eşzamanlı PyPI sorgularını açıklar.
+
+[09.11.2026 günlük özeti](notes/daily-summary-09-11-2026.md), PostgreSQL kabı,
+psycopg, bağlantı havuzu, Pydantic şemaları, FastAPI uçları ve API testlerini anlatır.
 
 Değişiklikler yerel çalışma alanında tutulur; kullanıcı açıkça istemeden commit veya GitHub'a push yapılmaz. Commit istendiğinde anlamlı işler ayrı commitlere ayrılır; push için ayrıca kullanıcının talebi gerekir.
