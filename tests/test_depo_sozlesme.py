@@ -30,7 +30,7 @@ async def depo(request):
         return
     adres = request.getfixturevalue("test_adresi")
     with psycopg.connect(adres) as baglanti:
-        baglanti.execute("TRUNCATE talepler RESTART IDENTITY")
+        baglanti.execute("TRUNCATE talepler RESTART IDENTITY CASCADE")
         ornekleri_yukle(baglanti, ORNEKLER)
     havuz = AsyncConnectionPool(adres, connection_class=psycopg.AsyncConnection, min_size=1, max_size=2, open=False)
     await havuz.open(wait=True, timeout=5)
