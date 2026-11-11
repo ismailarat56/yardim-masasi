@@ -1,5 +1,6 @@
 """Aynı sözleşme testleri bellek ve PostgreSQL depolarında koşar."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import psycopg
@@ -7,7 +8,7 @@ import pytest
 from psycopg_pool import AsyncConnectionPool
 
 from sahte_depo import BellekDeposu
-from yardim_masasi.model import Durum, Oncelik, Talep
+from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep
 from yardim_masasi.pg_depo import PgTalepDeposu
 from yardim_masasi.veritabani import ornekleri_yukle
 
@@ -100,47 +101,115 @@ async def test_listele_tam_talep_dondurur(depo):
     assert await depo.listele(durum=Durum.BEKLEMEDE) == [ORNEKLER[3]]
 
 
+# guncelle: sürüm kontrollü (senin yazdığın)
+
+
 async def test_guncelle_yalniz_durum(depo):
-    talep = await depo.guncelle(1, durum=Durum.KAPALI)
+    talep = await depo.guncelle(1, surum=1, durum=Durum.KAPALI)
     assert talep is not None
-    assert talep.durum == Durum.KAPALI
-    assert talep.oncelik == Oncelik.YUKSEK
+    assert (talep.durum, talep.oncelik) == (Durum.KAPALI, Oncelik.YUKSEK)
 
 
 async def test_guncelle_yalniz_oncelik(depo):
-    talep = await depo.guncelle(4, oncelik=Oncelik.YUKSEK)
+    talep = await depo.guncelle(4, surum=1, oncelik=Oncelik.YUKSEK)
     assert talep is not None
-    assert talep.oncelik == Oncelik.YUKSEK
-    assert talep.durum == Durum.BEKLEMEDE
+    assert (talep.durum, talep.oncelik) == (Durum.BEKLEMEDE, Oncelik.YUKSEK)
 
 
 async def test_guncelle_ikisi_birden(depo):
-    talep = await depo.guncelle(5, durum=Durum.BEKLEMEDE, oncelik=Oncelik.DUSUK)
+    talep = await depo.guncelle(5, surum=1, durum=Durum.BEKLEMEDE, oncelik=Oncelik.DUSUK)
     assert talep is not None
     assert (talep.durum, talep.oncelik) == (Durum.BEKLEMEDE, Oncelik.DUSUK)
 
 
+async def test_guncelle_surumu_bir_artirir(depo):
+    talep = await depo.guncelle(1, surum=1, durum=Durum.BEKLEMEDE)
+    assert talep is not None
+    assert talep.surum == 2
+
+
+async def test_guncelle_her_seferinde_bir_artirir(depo):
+    for beklenen in (2, 3, 4):
+        talep = await depo.guncelle(2, surum=beklenen - 1, oncelik=Oncelik.YUKSEK)
+        assert talep is not None
+        assert talep.surum == beklenen
+
+
 async def test_guncelle_kalici(depo):
-    await depo.guncelle(3, durum=Durum.KAPALI)
+    await depo.guncelle(3, surum=1, durum=Durum.KAPALI)
     talep = await depo.getir(3)
     assert talep is not None
-    assert talep.durum == Durum.KAPALI
+    assert (talep.durum, talep.surum) == (Durum.KAPALI, 2)
 
 
 async def test_guncelle_diger_alanlari_ve_talepleri_degistirmez(depo):
-    talep = await depo.guncelle(2, durum=Durum.ACIK)
+    talep = await depo.guncelle(2, surum=1, durum=Durum.ACIK)
     assert talep is not None
     assert (talep.baslik, talep.musteri, talep.etiketler, talep.acildi) == (
-        ORNEKLER[1].baslik, ORNEKLER[1].musteri, ORNEKLER[1].etiketler, ORNEKLER[1].acildi,
+        ORNEKLER[1].baslik,
+        ORNEKLER[1].musteri,
+        ORNEKLER[1].etiketler,
+        ORNEKLER[1].acildi,
     )
     assert await depo.getir(1) == ORNEKLER[0]
 
 
 async def test_listele_guncellemeden_sonra_da_numara_sirasiyla(depo):
-    await depo.guncelle(1, durum=Durum.BEKLEMEDE)
+    await depo.guncelle(1, surum=1, durum=Durum.BEKLEMEDE)
     assert numaralar(await depo.listele()) == [1, 2, 3, 4, 5]
 
 
 async def test_guncelle_olmayan_talepte_none(depo):
-    assert await depo.guncelle(99, durum=Durum.KAPALI) is None
+    assert await depo.guncelle(99, surum=1, durum=Durum.KAPALI) is None
     assert numaralar(await depo.listele()) == [1, 2, 3, 4, 5]
+
+
+async def test_olmayan_talepte_surum_ne_olursa_olsun_none(depo):
+    assert await depo.guncelle(99, surum=7, durum=Durum.KAPALI) is None
+
+
+async def test_eski_surumle_guncelleme_cakisir(depo):
+    await depo.guncelle(3, surum=1, durum=Durum.KAPALI)
+    with pytest.raises(SurumCakismasi):
+        await depo.guncelle(3, surum=1, durum=Durum.BEKLEMEDE)
+
+
+async def test_ileri_bir_surum_de_cakisir(depo):
+    with pytest.raises(SurumCakismasi):
+        await depo.guncelle(1, surum=5, durum=Durum.KAPALI)
+
+
+async def test_cakisma_guncel_talebi_tasir(depo):
+    await depo.guncelle(3, surum=1, durum=Durum.KAPALI)
+    with pytest.raises(SurumCakismasi) as bilgi:
+        await depo.guncelle(3, surum=1, durum=Durum.BEKLEMEDE)
+    guncel = bilgi.value.guncel
+    assert (guncel.id, guncel.durum, guncel.surum) == (3, Durum.KAPALI, 2)
+
+
+async def test_cakismada_hicbir_sey_yazilmaz(depo):
+    await depo.guncelle(3, surum=1, durum=Durum.KAPALI)
+    with pytest.raises(SurumCakismasi):
+        await depo.guncelle(3, surum=1, durum=Durum.BEKLEMEDE, oncelik=Oncelik.DUSUK)
+    talep = await depo.getir(3)
+    assert talep is not None
+    assert (talep.durum, talep.oncelik, talep.surum) == (Durum.KAPALI, Oncelik.YUKSEK, 2)
+
+
+@pytest.mark.parametrize("depo", ["pg"], indirect=True)
+async def test_ayni_anda_iki_guncellemeden_yalniz_biri_yazilir(depo):
+    """Yalnız PostgreSQL'de: iki guncelle aynı sürümle, iki ayrı bağlantıdan, aynı anda."""
+    for tur in range(1, 21):
+        mevcut = await depo.getir(1)
+        assert mevcut is not None
+        sonuclar = await asyncio.gather(
+            depo.guncelle(1, surum=mevcut.surum, durum=Durum.KAPALI),
+            depo.guncelle(1, surum=mevcut.surum, oncelik=Oncelik.DUSUK),
+            return_exceptions=True,
+        )
+        yazilan = [sonuc for sonuc in sonuclar if isinstance(sonuc, Talep)]
+        cakisan = [sonuc for sonuc in sonuclar if isinstance(sonuc, SurumCakismasi)]
+        assert (len(yazilan), len(cakisan)) == (1, 1), f"{tur}. tur: {sonuclar}"
+        son = await depo.getir(1)
+        assert son is not None
+        assert son.surum == mevcut.surum + 1

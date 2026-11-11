@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from yardim_masasi.model import Durum, Oncelik, Talep
+from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep
 
 
 class BellekDeposu:
@@ -38,11 +38,23 @@ class BellekDeposu:
         ]
 
     async def guncelle(
-        self, talep_id: int, *, durum: Durum | None = None, oncelik: Oncelik | None = None,
+        self,
+        talep_id: int,
+        *,
+        surum: int,
+        durum: Durum | None = None,
+        oncelik: Oncelik | None = None,
     ) -> Talep | None:
         talep = self._talepler.get(talep_id)
         if talep is None:
             return None
-        yeni = replace(talep, durum=durum or talep.durum, oncelik=oncelik or talep.oncelik)
+        if talep.surum != surum:
+            raise SurumCakismasi(talep)
+        yeni = replace(
+            talep,
+            durum=durum or talep.durum,
+            oncelik=oncelik or talep.oncelik,
+            surum=talep.surum + 1,
+        )
         self._talepler[talep_id] = yeni
         return yeni

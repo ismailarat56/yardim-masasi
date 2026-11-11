@@ -4,7 +4,7 @@ from typing import Any, Final
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from yardim_masasi.model import Durum, Oncelik, Talep
+from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep
 
 SUTUNLAR: Final = "id, baslik, durum, oncelik, musteri, etiketler, acildi, surum"
 
@@ -16,6 +16,7 @@ def talep_satirdan(satir: Mapping[str, Any]) -> Talep:
         etiketler=tuple(satir["etiketler"]), acildi=satir["acildi"],
         surum=satir["surum"],
     )
+
 
 
 class PgTalepDeposu:
@@ -74,19 +75,35 @@ class PgTalepDeposu:
                 return [talep_satirdan(satir) for satir in await imlec.fetchall()]
 
     async def guncelle(
-        self, talep_id: int, *, durum: Durum | None = None, oncelik: Oncelik | None = None,
+        self,
+        talep_id: int,
+        *,
+        surum: int,
+        durum: Durum | None = None,
+        oncelik: Oncelik | None = None,
     ) -> Talep | None:
+        mevcut = None
         async with self._havuz.connection() as baglanti:
             async with baglanti.cursor(row_factory=dict_row) as imlec:
+                # Kontrol ve yazma tek komutta: sürüm tutmazsa WHERE satırı seçmez, hiçbir şey yazılmaz.
                 await imlec.execute(
                     f"""
                     UPDATE talepler
                     SET durum = coalesce(%(durum)s, durum),
-                        oncelik = coalesce(%(oncelik)s, oncelik)
-                    WHERE id = %(talep_id)s
+                        oncelik = coalesce(%(oncelik)s, oncelik),
+                        surum = surum + 1
+                    WHERE id = %(talep_id)s AND surum = %(surum)s
                     RETURNING {SUTUNLAR}
                     """,
-                    {"talep_id": talep_id, "durum": durum, "oncelik": oncelik},
+                    {"talep_id": talep_id, "surum": surum, "durum": durum, "oncelik": oncelik},
                 )
                 satir = await imlec.fetchone()
-        return None if satir is None else talep_satirdan(satir)
+                if satir is None:
+                    # Satır gelmedi: ya talep yok ya da sürüm tutmadı. Hangisi olduğunu öğren.
+                    await imlec.execute(f"SELECT {SUTUNLAR} FROM talepler WHERE id = %s", (talep_id,))
+                    mevcut = await imlec.fetchone()
+        if satir is not None:
+            return talep_satirdan(satir)
+        if mevcut is None:
+            return None
+        raise SurumCakismasi(talep_satirdan(mevcut))

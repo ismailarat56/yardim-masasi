@@ -31,6 +31,10 @@ def yetkili():
     return {"X-API-Anahtari": ANAHTAR}
 
 
+def kosullu(etag):
+    return {**yetkili(), "If-Match": etag}
+
+
 def test_liste_hepsini_verir(istemci):
     yanit = istemci.get("/talepler")
     assert yanit.status_code == 200
@@ -113,19 +117,52 @@ def test_olustur_kisa_baslik_422(istemci):
     assert yanit.json()["detail"][0]["type"] == "string_too_short"
 
 
-def test_guncelle_200(istemci):
-    yanit = istemci.patch("/talepler/4", json={"durum": "kapali"}, headers=yetkili())
+def test_getir_etag_verir(istemci):
+    yanit = istemci.get("/talepler/3")
+    assert yanit.headers["ETag"] == '"1"'
+
+
+def test_guncelle_200_ve_yeni_etag(istemci):
+    yanit = istemci.patch("/talepler/4", json={"durum": "kapali"}, headers=kosullu('"1"'))
     assert yanit.status_code == 200
-    assert (yanit.json()["durum"], yanit.json()["oncelik"]) == ("kapali", "dusuk")
+    assert (yanit.json()["durum"], yanit.json()["oncelik"], yanit.json()["surum"]) == ("kapali", "dusuk", 2)
+    assert yanit.headers["ETag"] == '"2"'
 
 
 def test_guncelle_bos_govde_422(istemci):
-    assert istemci.patch("/talepler/4", json={}, headers=yetkili()).status_code == 422
+    yanit = istemci.patch("/talepler/4", json={}, headers=kosullu('"1"'))
+    assert yanit.status_code == 422
 
 
 def test_guncelle_olmayan_404(istemci):
-    yanit = istemci.patch("/talepler/99", json={"durum": "kapali"}, headers=yetkili())
+    yanit = istemci.patch("/talepler/99", json={"durum": "kapali"}, headers=kosullu('"1"'))
     assert yanit.status_code == 404
+
+
+def test_guncelle_if_match_yoksa_428(istemci):
+    yanit = istemci.patch("/talepler/4", json={"durum": "kapali"}, headers=yetkili())
+    assert yanit.status_code == 428
+    assert istemci.get("/talepler/4").json()["durum"] == "beklemede"
+
+
+def test_guncelle_anahtar_if_matchten_once_bakilir(istemci):
+    yanit = istemci.patch("/talepler/4", json={"durum": "kapali"})
+    assert yanit.status_code == 401
+
+
+@pytest.mark.parametrize("deger", ["1", 'W/"1"', '"abc"', '"0"', "*"])
+def test_guncelle_bicimsiz_if_match_400(istemci, deger):
+    yanit = istemci.patch("/talepler/4", json={"durum": "kapali"}, headers=kosullu(deger))
+    assert yanit.status_code == 400
+
+
+def test_guncelle_eski_surum_412(istemci):
+    istemci.patch("/talepler/4", json={"durum": "kapali"}, headers=kosullu('"1"'))
+    yanit = istemci.patch("/talepler/4", json={"durum": "acik"}, headers=kosullu('"1"'))
+    assert yanit.status_code == 412
+    assert yanit.json() == {"detail": "talep sen okuduktan sonra değişti"}
+    assert yanit.headers["ETag"] == '"2"'
+    assert istemci.get("/talepler/4").json()["durum"] == "kapali"
 
 
 # Ek testler: her biri geçici üretim kodu değişikliğiyle kırmızı görüldü.

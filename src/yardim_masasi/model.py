@@ -106,6 +106,14 @@ class Talep:
         )
 
 
+class SurumCakismasi(Exception):
+    """Talep, istemcinin gördüğü sürümden sonra değişmiş. Güncel hâli `guncel`'de."""
+
+    def __init__(self, guncel: Talep) -> None:
+        super().__init__(f"talep {guncel.id} değişmiş, güncel sürüm {guncel.surum}")
+        self.guncel = guncel
+
+
 def _dosyadaki_ogeler(yol: Path) -> list:
     try:
         if yol.suffix == ".jsonl":

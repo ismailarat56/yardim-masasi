@@ -1,13 +1,14 @@
 import os
+import re
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response
 from psycopg_pool import AsyncConnectionPool
 
-from yardim_masasi.model import Durum, Oncelik, Talep
+from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep
 from yardim_masasi.pg_depo import PgTalepDeposu
 from yardim_masasi.sema import TalepCevap, TalepGuncelle, TalepOlustur
 from yardim_masasi.veritabani import baglanti_adresi
@@ -39,8 +40,25 @@ def anahtar_gerekli(x_api_anahtari: Annotated[str | None, Header()] = None) -> N
         raise HTTPException(status_code=401, detail="geçerli bir API anahtarı gerekli")
 
 
+SURUM_ETIKETI = re.compile(r'"([1-9][0-9]*)"')
+
+
+def etag(talep: Talep) -> str:
+    return f'"{talep.surum}"'
+
+
+def beklenen_surum(if_match: Annotated[str | None, Header()] = None) -> int:
+    if if_match is None:
+        raise HTTPException(status_code=428, detail="If-Match başlığı gerekli: önce talebi GET ile oku")
+    eslesme = SURUM_ETIKETI.fullmatch(if_match.strip())
+    if eslesme is None:
+        raise HTTPException(status_code=400, detail='If-Match tırnaklı bir sürüm olmalı, örneğin "3"')
+    return int(eslesme.group(1))
+
+
 Depo = Annotated[PgTalepDeposu, Depends(depo_al)]
 TalepNo = Annotated[int, Path(gt=0)]
+BeklenenSurum = Annotated[int, Depends(beklenen_surum)]
 
 
 @app.get("/saglik")
@@ -66,10 +84,11 @@ async def talep_ozeti(depo: Depo) -> dict[Durum, int]:
 
 
 @app.get("/talepler/{talep_id}", response_model=TalepCevap)
-async def talep_getir(talep_id: TalepNo, depo: Depo) -> Talep:
+async def talep_getir(talep_id: TalepNo, depo: Depo, response: Response) -> Talep:
     talep = await depo.getir(talep_id)
     if talep is None:
         raise HTTPException(status_code=404, detail="talep bulunamadı")
+    response.headers["ETag"] = etag(talep)
     return talep
 
 
@@ -88,8 +107,22 @@ async def talep_olustur(govde: TalepOlustur, depo: Depo) -> Talep:
     response_model=TalepCevap,
     dependencies=[Depends(anahtar_gerekli)],
 )
-async def talep_guncelle(talep_id: TalepNo, govde: TalepGuncelle, depo: Depo) -> Talep:
-    talep = await depo.guncelle(talep_id, durum=govde.durum, oncelik=govde.oncelik)
+async def talep_guncelle(
+    talep_id: TalepNo,
+    govde: TalepGuncelle,
+    surum: BeklenenSurum,
+    depo: Depo,
+    response: Response,
+) -> Talep:
+    try:
+        talep = await depo.guncelle(talep_id, surum=surum, durum=govde.durum, oncelik=govde.oncelik)
+    except SurumCakismasi as hata:
+        raise HTTPException(
+            status_code=412,
+            detail="talep sen okuduktan sonra değişti",
+            headers={"ETag": etag(hata.guncel)},
+        ) from hata
     if talep is None:
         raise HTTPException(status_code=404, detail="talep bulunamadı")
+    response.headers["ETag"] = etag(talep)
     return talep
