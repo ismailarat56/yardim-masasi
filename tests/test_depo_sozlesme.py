@@ -1,9 +1,6 @@
 """Aynı sözleşme testleri bellek ve PostgreSQL depolarında koşar."""
 
-import os
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import LiteralString, cast
 
 import psycopg
 import pytest
@@ -15,7 +12,6 @@ from yardim_masasi.pg_depo import PgTalepDeposu
 from yardim_masasi.veritabani import ornekleri_yukle
 
 pytestmark = pytest.mark.anyio
-TABLO_SQL = Path(__file__).parent.parent / "sql" / "001_talepler.sql"
 T0 = datetime(2026, 11, 1, 9, 0, tzinfo=UTC)
 ORNEKLER = [
     Talep(1, "Giriş yapamıyorum", Durum.ACIK, Oncelik.YUKSEK, "ayse@example.com", ("hesap", "giris"), T0),
@@ -31,15 +27,9 @@ async def depo(request):
     if request.param == "bellek":
         yield BellekDeposu(ORNEKLER)
         return
-    adres = os.environ.get("TEST_DATABASE_URL")
-    if not adres:
-        pytest.skip("TEST_DATABASE_URL tanımlı değil")
+    adres = request.getfixturevalue("test_adresi")
     with psycopg.connect(adres) as baglanti:
-        # DROP yalnızca bu projeye ayrılan test veritabanında çalışabilir.
-        if baglanti.info.dbname != "yardim_masasi_test":
-            pytest.fail("TEST_DATABASE_URL yardim_masasi_test veritabanını göstermeli")
-        baglanti.execute("DROP TABLE IF EXISTS talepler")
-        baglanti.execute(cast(LiteralString, TABLO_SQL.read_text(encoding="utf-8")))
+        baglanti.execute("TRUNCATE talepler RESTART IDENTITY")
         ornekleri_yukle(baglanti, ORNEKLER)
     havuz = AsyncConnectionPool(adres, connection_class=psycopg.AsyncConnection, min_size=1, max_size=2, open=False)
     await havuz.open(wait=True, timeout=5)
