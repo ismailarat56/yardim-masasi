@@ -106,6 +106,15 @@ class Talep:
         )
 
 
+@dataclass(frozen=True)
+class Yorum:
+    id: int
+    talep_id: int
+    yazan: str
+    metin: str
+    yazildi: datetime
+
+
 class SurumCakismasi(Exception):
     """Talep, istemcinin gördüğü sürümden sonra değişmiş. Güncel hâli `guncel`'de."""
 

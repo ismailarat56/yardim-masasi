@@ -1,12 +1,14 @@
 from collections.abc import Mapping
 from typing import Any, Final
 
+import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep
+from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep, Yorum
 
 SUTUNLAR: Final = "id, baslik, durum, oncelik, musteri, etiketler, acildi, surum"
+YORUM_SUTUNLARI: Final = "id, talep_id, yazan, metin, yazildi"
 
 
 def talep_satirdan(satir: Mapping[str, Any]) -> Talep:
@@ -17,6 +19,15 @@ def talep_satirdan(satir: Mapping[str, Any]) -> Talep:
         surum=satir["surum"],
     )
 
+
+def yorum_satirdan(satir: Mapping[str, Any]) -> Yorum:
+    return Yorum(
+        id=satir["id"],
+        talep_id=satir["talep_id"],
+        yazan=satir["yazan"],
+        metin=satir["metin"],
+        yazildi=satir["yazildi"],
+    )
 
 
 class PgTalepDeposu:
@@ -107,3 +118,34 @@ class PgTalepDeposu:
         if mevcut is None:
             return None
         raise SurumCakismasi(talep_satirdan(mevcut))
+
+    async def yorum_ekle(self, talep_id: int, *, yazan: str, metin: str) -> Yorum | None:
+        try:
+            async with self._havuz.connection() as baglanti:
+                async with baglanti.cursor(row_factory=dict_row) as imlec:
+                    await imlec.execute(
+                        f"""
+                        INSERT INTO yorumlar (talep_id, yazan, metin)
+                        VALUES (%s, %s, %s)
+                        RETURNING {YORUM_SUTUNLARI}
+                        """,
+                        (talep_id, yazan, metin),
+                    )
+                    satir = await imlec.fetchone()
+        except psycopg.errors.ForeignKeyViolation:
+            return None
+        if satir is None:
+            raise RuntimeError("INSERT satır döndürmedi")
+        return yorum_satirdan(satir)
+
+    async def yorumlar(self, talep_id: int) -> list[Yorum] | None:
+        async with self._havuz.connection() as baglanti:
+            async with baglanti.cursor(row_factory=dict_row) as imlec:
+                await imlec.execute("SELECT 1 FROM talepler WHERE id = %s", (talep_id,))
+                if await imlec.fetchone() is None:
+                    return None
+                await imlec.execute(
+                    f"SELECT {YORUM_SUTUNLARI} FROM yorumlar WHERE talep_id = %s ORDER BY id",
+                    (talep_id,),
+                )
+                return [yorum_satirdan(satir) async for satir in imlec]

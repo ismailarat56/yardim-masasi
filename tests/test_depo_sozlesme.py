@@ -213,3 +213,41 @@ async def test_ayni_anda_iki_guncellemeden_yalniz_biri_yazilir(depo):
         son = await depo.getir(1)
         assert son is not None
         assert son.surum == mevcut.surum + 1
+
+
+# yorumlar (hazır verildi)
+
+
+async def test_yorum_ekle_alanlari_doldurur(depo):
+    yorum = await depo.yorum_ekle(3, yazan="ayse", metin="Müşteriyi aradım.")
+    assert yorum is not None
+    assert (yorum.id, yorum.talep_id, yorum.yazan, yorum.metin) == (1, 3, "ayse", "Müşteriyi aradım.")
+    assert yorum.yazildi is not None
+
+
+async def test_olmayan_talebe_yorum_eklenmez(depo):
+    assert await depo.yorum_ekle(99, yazan="ayse", metin="Kayıp talep") is None
+
+
+async def test_yorumlar_eklenme_sirasiyla(depo):
+    await depo.yorum_ekle(1, yazan="ayse", metin="Birinci")
+    await depo.yorum_ekle(1, yazan="mehmet", metin="İkinci")
+    yorumlar = await depo.yorumlar(1)
+    assert yorumlar is not None
+    assert [(yorum.yazan, yorum.metin) for yorum in yorumlar] == [("ayse", "Birinci"), ("mehmet", "İkinci")]
+
+
+async def test_yorumlar_yalniz_o_talebin(depo):
+    await depo.yorum_ekle(1, yazan="ayse", metin="Bir")
+    await depo.yorum_ekle(2, yazan="ayse", metin="İki")
+    yorumlar = await depo.yorumlar(2)
+    assert yorumlar is not None
+    assert [yorum.metin for yorum in yorumlar] == ["İki"]
+
+
+async def test_yorumsuz_talepte_bos_liste(depo):
+    assert await depo.yorumlar(4) == []
+
+
+async def test_olmayan_talebin_yorumlari_none(depo):
+    assert await depo.yorumlar(99) is None

@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep
+from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep, Yorum
 
 
 class BellekDeposu:
@@ -10,6 +10,7 @@ class BellekDeposu:
 
     def __init__(self, talepler: Iterable[Talep] = ()) -> None:
         self._talepler = {talep.id: talep for talep in talepler}
+        self._yorumlar: list[Yorum] = []
 
     async def getir(self, talep_id: int) -> Talep | None:
         return self._talepler.get(talep_id)
@@ -58,3 +59,15 @@ class BellekDeposu:
         )
         self._talepler[talep_id] = yeni
         return yeni
+
+    async def yorum_ekle(self, talep_id: int, *, yazan: str, metin: str) -> Yorum | None:
+        if talep_id not in self._talepler:
+            return None
+        yorum = Yorum(len(self._yorumlar) + 1, talep_id, yazan, metin, datetime.now(UTC))
+        self._yorumlar.append(yorum)
+        return yorum
+
+    async def yorumlar(self, talep_id: int) -> list[Yorum] | None:
+        if talep_id not in self._talepler:
+            return None
+        return [yorum for yorum in self._yorumlar if yorum.talep_id == talep_id]
