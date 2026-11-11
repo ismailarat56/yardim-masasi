@@ -6,7 +6,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from yardim_masasi.model import Durum, Oncelik, Talep
 
-SUTUNLAR: Final = "id, baslik, durum, oncelik, musteri, etiketler, acildi"
+SUTUNLAR: Final = "id, baslik, durum, oncelik, musteri, etiketler, acildi, surum"
 
 
 def talep_satirdan(satir: Mapping[str, Any]) -> Talep:
@@ -14,6 +14,7 @@ def talep_satirdan(satir: Mapping[str, Any]) -> Talep:
         id=satir["id"], baslik=satir["baslik"], durum=Durum(satir["durum"]),
         oncelik=Oncelik(satir["oncelik"]), musteri=satir["musteri"],
         etiketler=tuple(satir["etiketler"]), acildi=satir["acildi"],
+        surum=satir["surum"],
     )
 
 

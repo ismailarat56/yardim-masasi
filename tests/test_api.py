@@ -55,6 +55,7 @@ def test_getir_alanlari_verir(istemci):
         "id": 1, "baslik": "Giriş yapamıyorum", "durum": "acik", "oncelik": "yuksek",
         "musteri": "ayse@example.com", "etiketler": ["hesap", "giris"],
         "acildi": "2026-11-01T09:00:00Z",
+        "surum": 1,
     }
 
 

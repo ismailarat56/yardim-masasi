@@ -40,3 +40,4 @@ class TalepCevap(BaseModel):
     musteri: str
     etiketler: list[str]
     acildi: datetime
+    surum: int

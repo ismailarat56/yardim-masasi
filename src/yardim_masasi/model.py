@@ -59,6 +59,7 @@ class Talep:
     musteri: str
     etiketler: tuple[str, ...] = ()
     acildi: datetime | None = None
+    surum: int = 1
 
     @classmethod
     def sozlukten(cls, veri: dict) -> Talep:
