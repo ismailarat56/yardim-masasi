@@ -41,3 +41,22 @@ class TalepCevap(BaseModel):
     etiketler: list[str]
     acildi: datetime
     surum: int
+
+
+Yazan = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
+YorumMetni = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+
+class YorumOlustur(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    yazan: Yazan
+    metin: YorumMetni
+
+
+class YorumCevap(BaseModel):
+    id: int
+    talep_id: int
+    yazan: str
+    metin: str
+    yazildi: datetime

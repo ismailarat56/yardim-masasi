@@ -8,9 +8,9 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response
 from psycopg_pool import AsyncConnectionPool
 
-from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep
+from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep, Yorum
 from yardim_masasi.pg_depo import PgTalepDeposu
-from yardim_masasi.sema import TalepCevap, TalepGuncelle, TalepOlustur
+from yardim_masasi.sema import TalepCevap, TalepGuncelle, TalepOlustur, YorumCevap, YorumOlustur
 from yardim_masasi.veritabani import baglanti_adresi
 
 
@@ -126,3 +126,24 @@ async def talep_guncelle(
         raise HTTPException(status_code=404, detail="talep bulunamadı")
     response.headers["ETag"] = etag(talep)
     return talep
+
+
+@app.get("/talepler/{talep_id}/yorumlar", response_model=list[YorumCevap])
+async def yorumlari_listele(talep_id: TalepNo, depo: Depo) -> list[Yorum]:
+    yorumlar = await depo.yorumlar(talep_id)
+    if yorumlar is None:
+        raise HTTPException(status_code=404, detail="talep bulunamadı")
+    return yorumlar
+
+
+@app.post(
+    "/talepler/{talep_id}/yorumlar",
+    status_code=201,
+    response_model=YorumCevap,
+    dependencies=[Depends(anahtar_gerekli)],
+)
+async def yorum_ekle(talep_id: TalepNo, govde: YorumOlustur, depo: Depo) -> Yorum:
+    yorum = await depo.yorum_ekle(talep_id, yazan=govde.yazan, metin=govde.metin)
+    if yorum is None:
+        raise HTTPException(status_code=404, detail="talep bulunamadı")
+    return yorum

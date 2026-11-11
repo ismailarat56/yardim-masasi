@@ -224,3 +224,77 @@ def test_ascii_olmayan_anahtar_401(istemci):
         headers={"X-API-Anahtari": "şifre".encode()},
     )
     assert yanit.status_code == 401
+
+
+# Yorum uçları: ilk iki test hazır, altına en az beş test yaz.
+
+
+def test_yorum_ekle_201(istemci):
+    yanit = istemci.post(
+        "/talepler/3/yorumlar",
+        json={"yazan": "ayse", "metin": "Müşteriyi aradım."},
+        headers=yetkili(),
+    )
+    assert yanit.status_code == 201
+    govde = yanit.json()
+    assert (govde["id"], govde["talep_id"], govde["yazan"], govde["metin"]) == (1, 3, "ayse", "Müşteriyi aradım.")
+
+
+def test_yorumlar_olmayan_talepte_404(istemci):
+    yanit = istemci.get("/talepler/99/yorumlar")
+    assert yanit.status_code == 404
+    assert yanit.json() == {"detail": "talep bulunamadı"}
+
+
+def test_yorum_ekle_anahtarsiz_401_ve_yorum_eklenmez(istemci):
+    yanit = istemci.post("/talepler/3/yorumlar", json={"yazan": "ayse", "metin": "Müşteriyi aradım."})
+    assert yanit.status_code == 401
+    assert istemci.get("/talepler/3/yorumlar").json() == []
+
+
+def test_olmayan_talebe_yorum_ekle_404(istemci):
+    yanit = istemci.post("/talepler/99/yorumlar", json={"yazan": "ayse", "metin": "Kayıp talep"}, headers=yetkili())
+    assert yanit.status_code == 404
+    assert yanit.json() == {"detail": "talep bulunamadı"}
+
+
+def test_bosluk_metinli_yorum_422(istemci):
+    yanit = istemci.post("/talepler/3/yorumlar", json={"yazan": "ayse", "metin": "   "}, headers=yetkili())
+    assert yanit.status_code == 422
+    assert yanit.json()["detail"][0]["loc"] == ["body", "metin"]
+
+
+def test_yazani_eksik_yorum_422(istemci):
+    yanit = istemci.post("/talepler/3/yorumlar", json={"metin": "Müşteriyi aradım."}, headers=yetkili())
+    assert yanit.status_code == 422
+    assert yanit.json()["detail"][0]["loc"] == ["body", "yazan"]
+
+
+def test_govdede_talep_id_gonderilirse_422(istemci):
+    yanit = istemci.post(
+        "/talepler/3/yorumlar",
+        json={"talep_id": 1, "yazan": "ayse", "metin": "Müşteriyi aradım."},
+        headers=yetkili(),
+    )
+    assert yanit.status_code == 422
+    assert yanit.json()["detail"][0]["type"] == "extra_forbidden"
+
+
+def test_yorumlar_eklenme_sirasiyla_listelenir(istemci):
+    istemci.post("/talepler/1/yorumlar", json={"yazan": "ayse", "metin": "Birinci"}, headers=yetkili())
+    istemci.post("/talepler/1/yorumlar", json={"yazan": "mehmet", "metin": "İkinci"}, headers=yetkili())
+    yanit = istemci.get("/talepler/1/yorumlar")
+    assert yanit.status_code == 200
+    assert [yorum["metin"] for yorum in yanit.json()] == ["Birinci", "İkinci"]
+
+
+def test_yorum_talebin_etagini_degistirmez(istemci):
+    yanit = istemci.post("/talepler/3/yorumlar", json={"yazan": "ayse", "metin": "Not"}, headers=yetkili())
+    assert yanit.status_code == 201
+    assert istemci.get("/talepler/3").headers["ETag"] == '"1"'
+
+
+def test_yorum_baska_talepte_gorunmez(istemci):
+    yanit = istemci.post("/talepler/1/yorumlar", json={"yazan": "ayse", "metin": "Bir"}, headers=yetkili())
+    assert yanit.status_code == 201
+    assert istemci.get("/talepler/2/yorumlar").json() == []
