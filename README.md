@@ -4,7 +4,7 @@
 
 `talep-ozeti` komutu bir JSON dosyasındaki destek taleplerini durumlarına göre sayar ve kapanmamış talepleri öncelik sırasıyla listeler. `ornek/talepler.json` on iki örnek talep içerir.
 
-Projenin üçüncü parçası, talepleri PostgreSQL'de saklayıp listeleme, okuma, oluşturma ve güncelleme işlerini HTTP üzerinden sunan bir FastAPI uygulamasıdır. API taleplere yazılan yorumları da tutar; veritabanı şeması Alembic migration'larıyla kurulur.
+Projenin üçüncü parçası, talepleri PostgreSQL'de saklayıp listeleme, okuma, oluşturma ve güncelleme işlerini HTTP üzerinden sunan bir FastAPI uygulamasıdır. API taleplere yazılan yorumları da tutar, talepleri sayfa sayfa listeler ve başlıklarında arar; veritabanı şeması Alembic migration'larıyla kurulur.
 
 Proje aynı zamanda Python yorumlayıcısı, sanal ortam, `uv`, bağımlılık yönetimi ve ortam değişkenleri üzerine bir çalışma örneğidir.
 
@@ -210,6 +210,8 @@ Revizyonlar:
     0001  talepler tablosu, kısıtları ve durum indeksi
     0002  talepler.surum sütunu (varsayılan 1, surum >= 1 kısıtı)
     0003  yorumlar tablosu; talep_id talepler.id'ye ON DELETE CASCADE ile bağlı
+    0004  talepler üzerinde (acildi, id) indeksi; sayfalamayı hızlandırır
+    0005  talepler.arama sütunu (to_tsvector('turkish', baslik), STORED) ve GIN indeksi
 
 Sık kullanılan komutlar (hepsi `uv run --env-file .env alembic ...` biçiminde):
 
@@ -231,7 +233,7 @@ uv run --env-file .env alembic upgrade head
 `stamp` yalnızca `alembic_version`'a yazar, şemaya dokunmaz. Yeni bir revizyon, sıradaki numarayla açılır ve `upgrade`/`downgrade` fonksiyonları elle yazılır:
 
 ```bash
-uv run alembic revision --rev-id 0004 -m "kisa aciklama"
+uv run alembic revision --rev-id 0006 -m "kisa aciklama"
 ```
 
 Örnek talepleri asıl veritabanına `talep-yukle` yükler. Dosya verilmezse `ornek/talepler-zamanli.jsonl` okunur:
@@ -265,28 +267,55 @@ Sunucu `http://127.0.0.1:8000` adresinde açılır ve kod değiştikçe kendini 
 | Uç | İşlev | Başarı | Hata kodları |
 | --- | --- | --- | --- |
 | `GET /saglik` | Veritabanına `SELECT 1` gönderir. | `200` `{"durum": "ok"}` | `500` veritabanına ulaşılamazsa |
-| `GET /talepler` | Talepleri numara sırasıyla listeler; `durum`, `oncelik` ve `etiket` sorgu parametreleriyle süzer. | `200` | `422` bilinmeyen durum veya öncelik |
+| `GET /talepler` | Talepleri en yeniden eskiye, sayfa sayfa listeler; `durum`, `oncelik` ve `etiket` ile süzer, `?ara=` ile başlıkta arar; `?limit=` sayfa boyunu, `?ayrac=` sonraki sayfayı seçer. | `200` | `400` bozuk ayraç, `422` bilinmeyen durum veya öncelik, geçersiz `limit` ya da `ara` |
 | `GET /talepler/ozet` | Her durumdaki talep sayısını verir; talebi olmayan durum `0` görünür. | `200` | — |
-| `GET /talepler/{talep_id}` | Tek talebi verir; `ETag` başlığında talebin sürümü bulunur. | `200` | `404` talep yok, `422` numara pozitif tam sayı değil |
+| `GET /talepler/{talep_id}` | Tek talebi verir; `ETag` başlığında talebin sürümü bulunur. `If-None-Match` sürümle eşleşirse gövdesiz `304` döner. | `200`, `304` | `404` talep yok, `422` numara pozitif tam sayı değil |
 | `POST /talepler` | Yeni talep oluşturur; durum her zaman `acik`, öncelik verilmezse `orta` olur. | `201` | `401` anahtar, `422` geçersiz gövde |
 | `PATCH /talepler/{talep_id}` | `If-Match`'teki sürüm güncelse durumu, önceliği ya da ikisini değiştirir. | `200`, yeni `ETag` | `401` anahtar, `428` `If-Match` yok, `400` biçimsiz `If-Match`, `422` geçersiz veya boş gövde, `404` talep yok, `412` sürüm eski |
 | `GET /talepler/{talep_id}/yorumlar` | Talebin yorumlarını eklenme sırasıyla listeler. | `200` | `404` talep yok |
 | `POST /talepler/{talep_id}/yorumlar` | Talebe `yazan` ve `metin` ile yorum ekler. | `201` | `401` anahtar, `422` geçersiz gövde, `404` talep yok |
 
-Okuma uçları açıktır. `POST` ve `PATCH` uçları, `X-API-Anahtari` başlığında sunucudaki `API_ANAHTARI` değerinin aynısını ister. Başlık yoksa, değer yanlışsa ya da sunucuda `API_ANAHTARI` hiç tanımlı değilse istek `401` alır ve hiçbir şey değişmez; anahtar ayarlanmamış bir sunucuda yazma tamamen kapalıdır.
+### Liste ve Sayfalar
 
-Gövdeler Pydantic şemalarıyla doğrulanır. Başlık boşlukları temizlendikten sonra 3–200 karakter, `musteri` tek `@` içeren bir adres, her etiket 1–30 karakter olmalıdır. Şemada bulunmayan bir alan, örneğin oluştururken gönderilen `durum` ya da `id`, sessizce yok sayılmaz; istek `422` ve `extra_forbidden` hatası alır.
+`GET /talepler` bir liste değil, tek bir sayfa döndürür:
 
-```bash
-curl -i -X POST http://127.0.0.1:8000/talepler \
-  -H "Content-Type: application/json" \
-  -H "X-API-Anahtari: gelistirme-anahtari" \
-  -d '{"baslik": "Fatura indirilemiyor", "musteri": "ali@example.com", "oncelik": "yuksek", "etiketler": ["fatura"]}'
+```json
+{"talepler": [{"id": 12, "baslik": "...", "surum": 1}, ...], "sonraki": "eyJhIjoiMjAyNi0xMC0zMFQwNjowMDowMCswMDowMCIsImkiOjEwfQ"}
 ```
 
-Yanıt `201 Created` ve veritabanının verdiği numara, durum, açılış zamanı ve `surum: 1` ile oluşan talebin JSON'udur.
+Talepler en yeniden eskiye, yani açılış zamanına (`acildi`) göre azalan sırada gelir; aynı anda açılmış talepler arasında büyük numara önce gelir. `limit` bir sayfadaki talep sayısıdır: varsayılanı `20`, alabileceği değerler `1`–`100`; aralık dışındaki ya da sayı olmayan bir değer `422` alır.
 
-### Sürüm, ETag ve If-Match
+`sonraki`, sonraki sayfanın nereden başlayacağını gösteren bir ayraçtır; son sayfada `null` olur. Ayraç, istemcinin okuması ya da değiştirmesi için değil, olduğu gibi `?ayrac=` ile geri yollanması için verilir; aynı `durum`, `oncelik`, `etiket`, `ara` ve `limit` değerleriyle birlikte gönderilir. Bu API'nin vermediği ya da bozulmuş bir ayraç `400` alır.
+
+Ayraç bir sayfa numarası değil, sayfanın son talebinin `(acildi, id)` çiftidir; sonraki sayfa bu çiftten küçük olanlarla başlar. Bu yüzden iki sayfa arasında yeni bir talep açılsa da sayfalar kaymaz: hiçbir talep iki kez gelmez, hiçbiri atlanmaz. Yeni talep, listeyi baştan okuyan bir sonraki istekte görünür.
+
+```bash
+curl "http://127.0.0.1:8000/talepler?limit=3"
+curl "http://127.0.0.1:8000/talepler?limit=3&ayrac=eyJhIjoiMjAyNi0xMC0zMFQwNjowMDowMCswMDowMCIsImkiOjEwfQ"
+```
+
+On iki örnek talepte ilk komut 12, 11 ve 10 numaralı talepleri, ikincisi 9, 8 ve 7'yi verir.
+
+### Arama
+
+`ara`, talep başlıklarında PostgreSQL'in Türkçe tam metin aramasıyla arar. Kelimeler köklerine indirilir ve büyük/küçük harfe bakılmaz; `kargom` "Kargo" geçen başlığı, `şifremi` "Şifre" geçen başlığı bulur.
+
+| Yazım | Anlamı |
+| --- | --- |
+| `kargo numarası` | Boşlukla ayrılan kelimelerin hepsi başlıkta geçmeli. |
+| `kargo or şifre` | Kelimelerden biri geçmesi yeter. |
+| `kargo -takip` | `takip` geçen başlıklar elenir. |
+| `"takip numarası"` | Tırnak içindeki kelimeler bu sırayla, yan yana geçmeli. |
+
+`ve`, `ile`, `için` gibi durak kelimeleri aramaya katılmaz; yalnızca durak kelimesinden oluşan bir arama hata vermez, boş liste döner. `ara` 2–100 karakter olmalıdır; dışındaki değerler `422` alır.
+
+Sonuçlar alakaya göre sıralanmaz; listeyle aynı sırada, en yeniden eskiye gelir ve aynı ayraçla sayfalanır. `ara` öteki süzgeçlerle birlikte kullanılabilir.
+
+```bash
+curl "http://127.0.0.1:8000/talepler?ara=fatura"
+```
+
+### Sürüm ve Koşullu İstekler
 
 Her talebin bir `surum` sütunu vardır; yeni talep `1` ile başlar ve her başarılı `PATCH` onu bir artırır. `GET /talepler/{talep_id}` bu sürümü tırnak içinde `ETag` başlığında da verir, ör. `ETag: "3"`.
 
@@ -300,6 +329,29 @@ Her talebin bir `surum` sütunu vardır; yeni talep `1` ile başlar ve her başa
 | Sürüm güncel | `200 OK`; gövde güncellenen talep, `ETag` yeni sürüm. |
 
 Denetimler şu sırayla yapılır: `401` (API anahtarı), `428`/`400` (`If-Match`), `422` (gövde), `404` (talep), `412` (sürüm). Örneğin anahtarsız ve `If-Match`'siz bir istek `401` alır.
+
+`GET /talepler/{talep_id}`, `If-None-Match` başlığını da okur. İstemci elindeki `ETag`'i bu başlıkla gönderir; talep o sürümdeyse yanıt gövdesiz `304 Not Modified` ve aynı `ETag`'dir, istemci elindeki kopyayı kullanır. Sürüm değişmişse her zamanki gibi `200`, güncel gövde ve yeni `ETag` döner.
+
+Karşılaştırma zayıftır: `W/"3"` ile `"3"` aynı sayılır. Başlık virgülle ayrılmış birden çok etiket taşıyabilir; biri tutarsa `304` döner. `*` her etikete uyar. Talep yoksa başlık ne olursa olsun `404` döner.
+
+```bash
+curl -i http://127.0.0.1:8000/talepler/4 -H 'If-None-Match: "1"'   # 304 Not Modified, ETag: "1"
+```
+
+### Anahtar ve Gövde
+
+Okuma uçları açıktır. `POST` ve `PATCH` uçları, `X-API-Anahtari` başlığında sunucudaki `API_ANAHTARI` değerinin aynısını ister. Başlık yoksa, değer yanlışsa ya da sunucuda `API_ANAHTARI` hiç tanımlı değilse istek `401` alır ve hiçbir şey değişmez; anahtar ayarlanmamış bir sunucuda yazma tamamen kapalıdır.
+
+Gövdeler Pydantic şemalarıyla doğrulanır. Başlık boşlukları temizlendikten sonra 3–200 karakter, `musteri` tek `@` içeren bir adres, her etiket 1–30 karakter olmalıdır. Şemada bulunmayan bir alan, örneğin oluştururken gönderilen `durum` ya da `id`, sessizce yok sayılmaz; istek `422` ve `extra_forbidden` hatası alır.
+
+```bash
+curl -i -X POST http://127.0.0.1:8000/talepler \
+  -H "Content-Type: application/json" \
+  -H "X-API-Anahtari: gelistirme-anahtari" \
+  -d '{"baslik": "Fatura indirilemiyor", "musteri": "ali@example.com", "oncelik": "yuksek", "etiketler": ["fatura"]}'
+```
+
+Yanıt `201 Created` ve veritabanının verdiği numara, durum, açılış zamanı ve `surum: 1` ile oluşan talebin JSON'udur.
 
 ```bash
 curl -i http://127.0.0.1:8000/talepler/4          # ETag: "1"
@@ -339,9 +391,10 @@ curl -i -X POST http://127.0.0.1:8000/talepler/4/yorumlar \
     __init__.py   yardim-masasi: argümanlar, eşzamanlı sorgular ve çıkış kodları
     __main__.py   python -m yardim_masasi için
     veritabani.py DATABASE_URL okuma; örnekleri yükleyip numara sayacını ayarlayan talep-yukle komutu
-    pg_depo.py    PgTalepDeposu: getir, ekle, listele, sürüm kontrollü güncelle, durum sayıları, yorum ekle ve yorumlar
+    sayfa.py      Ayrac (acildi, id), Sayfa ve GecersizAyrac; ayracı opak bir metne yazan ayrac_yaz ve geri okuyan ayrac_oku
+    pg_depo.py    PgTalepDeposu: getir, ekle, ayraçla sayfa sayfa ve tam metin aramayla listele, sürüm kontrollü güncelle, durum sayıları, yorum ekle ve yorumlar
     sema.py       API gövdeleri ve yanıtları için Pydantic şemaları: TalepOlustur, TalepGuncelle, TalepCevap, YorumOlustur, YorumCevap
-    api.py        FastAPI uygulaması: lifespan ile bağlantı havuzu, sekiz uç, API anahtarı, ETag ve If-Match denetimi
+    api.py        FastAPI uygulaması: lifespan ile bağlantı havuzu, sekiz uç, API anahtarı, sayfalı liste ve arama, ETag, If-Match ve If-None-Match denetimi
 
 Proje kökünde (`sql/` klasörü artık yok; şema migration'larda):
 
@@ -466,7 +519,9 @@ Testler `alembic.ini`'yi okumaz: `alembic_ayari` yalnızca `script_location`'ı 
 
 `test_gocler.py` migration zincirini denetler: veritabanının en son revizyonda olduğunu, bütün revizyonların `base`'e kadar geri alınıp yeniden kurulabildiğini ve her revizyonun tek tek `upgrade`, `downgrade -1`, yeniden `upgrade` yapılabildiğini. Böylece yazılmayı unutulmuş ya da yanlış bir `downgrade` yakalanır.
 
-`test_depo_sozlesme.py`, aynı sözleşme testlerini hem `BellekDeposu` hem `PgTalepDeposu` üzerinde çalıştırarak iki deponun aynı davrandığını doğrular. `test_api.py` veritabanı kullanmaz: `TestClient` lifespan'ı çalıştırmadığı için bağlantı havuzu açılmaz ve `app.dependency_overrides` ile `depo_al` yerine bellek deposu verilir. Bu testler Docker kapalıyken de geçer.
+`test_depo_sozlesme.py`, aynı sözleşme testlerini hem `BellekDeposu` hem `PgTalepDeposu` üzerinde çalıştırarak iki deponun aynı davrandığını doğrular. Arama testleri ise yalnızca PostgreSQL'de koşar: kök bulma, durak kelimeleri, `or`, `-kelime` ve tırnaklı ifade PostgreSQL'in Türkçe sözlüğünden ve `websearch_to_tsquery`'den gelir. Bellek deposundaki arama yalnızca kelimelerin başlıkta geçip geçmediğine bakan kaba bir taklittir; aynı testleri ona koşturmak PostgreSQL'i değil taklidi sınardı.
+
+`test_sayfa.py` veritabanı kullanmaz: ayracın yazılıp okunduğunda aynı kaldığını, saat dilimini koruduğunu, adreste kaçışsız kullanılabildiğini ve bozuk ya da değiştirilmiş metinlerin `GecersizAyrac` ile reddedildiğini denetler. `test_api.py` veritabanı kullanmaz: `TestClient` lifespan'ı çalıştırmadığı için bağlantı havuzu açılmaz ve `app.dependency_overrides` ile `depo_al` yerine bellek deposu verilir. Bu testler Docker kapalıyken de geçer.
 
 Testler metin yardımcılarını, talep modelini, zaman doğrulamasını, depoyu, JSONL
 akışını, filtreleri ve komutun çıktı/çıkış kodlarını kontrol eder. PyPI yeniden
@@ -497,11 +552,13 @@ deneme testleri gerçek ağ isteği yerine sahte yanıtlar ve taşıma hataları
 - Talep dosyası UTF-8 değilse düzgün bir mesaj yok; Python'un hata izi basılır.
 - API çalışırken veritabanı kapanırsa havuzdaki kopuk bağlantıyı alan ilk istek hemen `500` alır. Havuz yeni bağlantı kuramadığı için sonraki istekler bağlantı beklerken havuzun 30 saniyelik zaman aşımına kadar bekler ve sonra `500` alır. `/saglik` de aynı biçimde davranır.
 - API anahtarı tek ve herkesin paylaştığı bir değer. Kullanıcı ayrımı yok; bir talebi kimin oluşturduğu ya da değiştirdiği kaydedilmiyor. Anahtarı değiştirmek sunucuyu yeni ortam değişkeniyle yeniden başlatmayı gerektiriyor.
-- `GET /talepler` sayfalama yapmıyor; eşleşen bütün talepleri tek yanıtta döndürüyor. Talep sayısı arttıkça yanıt büyüyor.
 - Migration'lar elle yazılıyor. Tablolar SQLAlchemy modeliyle tanımlanmadığı için `alembic revision --autogenerate` kullanılamıyor; şema ile revizyonların uyumunu yalnızca testler denetliyor.
 - `If-Match` yalnızca tek ve tırnaklı bir sürüm kabul ediyor. `*`, zayıf etiket (`W/"1"`) ve virgülle ayrılmış birden çok etiket standartta geçerli olsa da `400` alıyor.
-- `GET` uçlarında `If-None-Match` desteklenmiyor; talep değişmemiş olsa da her istekte gövde gönderiliyor, `304 Not Modified` dönmüyor.
 - Yorumlar düzenlenemiyor ve silinemiyor. `yazan` alanı istemcinin yazdığı serbest bir metin; API anahtarı ortak olduğu için yorumu gerçekten kimin yazdığı doğrulanmıyor.
+- Sayfalar yalnızca ileri gidiyor: önceki sayfaya dönmek ya da belli bir sayfaya atlamak için ayraç yok. Yanıtta toplam talep ya da sayfa sayısı da yok.
+- Arama yalnızca başlıkta yapılıyor; yorumlar ve etiketler aranmıyor. Sonuçlar alakaya göre değil, en yeniden eskiye sıralanıyor.
+- Türkçe kök bulucu bazı ekli kelimeleri yalın hâlleriyle eşleştiremiyor: `fatura` ile `faturada` (`fatur` / `fatura`), `numara` ile `numarası` (`numar` / `numaras`), `iade` ile `iadem` (`ia` / `iade`) farklı köklere iniyor, biri ötekini bulmuyor. Yazım hatalarına tolerans yok; `fatüra` hiçbir şey bulmaz.
+- Büyük `I` harfi Türkçe kurala göre `ı`'ya değil `i`'ye küçültülüyor: `IŞIKLI` `işikli` olarak saklanıyor, bu yüzden `ışıklı` aramasıyla bulunmuyor.
 
 ## Çalışma Notları ve Git Akışı
 
