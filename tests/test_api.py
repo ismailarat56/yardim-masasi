@@ -35,15 +35,43 @@ def kosullu(etag):
     return {**yetkili(), "If-Match": etag}
 
 
-def test_liste_hepsini_verir(istemci):
+def numaralar(yanit):
+    return [talep["id"] for talep in yanit.json()["talepler"]]
+
+
+def test_liste_en_yeniden_eskiye(istemci):
     yanit = istemci.get("/talepler")
     assert yanit.status_code == 200
-    assert [talep["id"] for talep in yanit.json()] == [1, 2, 3, 4, 5]
+    assert numaralar(yanit) == [5, 4, 3, 2, 1]
+    assert yanit.json()["sonraki"] is None
 
 
 def test_liste_duruma_gore(istemci):
     yanit = istemci.get("/talepler", params={"durum": "acik"})
-    assert [talep["id"] for talep in yanit.json()] == [1, 3, 5]
+    assert numaralar(yanit) == [5, 3, 1]
+
+
+def test_liste_sonraki_ayracla_devam_eder(istemci):
+    ilk = istemci.get("/talepler", params={"limit": 2})
+    assert numaralar(ilk) == [5, 4]
+    ikinci = istemci.get("/talepler", params={"limit": 2, "ayrac": ilk.json()["sonraki"]})
+    assert numaralar(ikinci) == [3, 2]
+
+
+def test_liste_bozuk_ayrac_400(istemci):
+    yanit = istemci.get("/talepler", params={"ayrac": "bozuk"})
+    assert yanit.status_code == 400
+
+
+def test_liste_aramayi_depoya_verir(istemci):
+    yanit = istemci.get("/talepler", params={"ara": "şifre"})
+    assert numaralar(yanit) == [3]
+
+
+def test_liste_tek_harfle_aranmaz_422(istemci):
+    yanit = istemci.get("/talepler", params={"ara": "a"})
+    assert yanit.status_code == 422
+    assert yanit.json()["detail"][0]["loc"] == ["query", "ara"]
 
 
 def test_liste_bilinmeyen_durum_422(istemci):
@@ -171,7 +199,7 @@ def test_guncelle_eski_surum_412(istemci):
 def test_liste_etikete_gore(istemci):
     yanit = istemci.get("/talepler", params={"etiket": "hesap"})
     assert yanit.status_code == 200
-    assert [talep["id"] for talep in yanit.json()] == [1, 3]
+    assert numaralar(yanit) == [3, 1]
 
 
 def test_olustur_baslik_ve_etiket_bosluklarini_temizler(istemci):
@@ -215,7 +243,7 @@ def test_anahtar_tanimli_degilse_yazma_kapali(istemci, monkeypatch):
         "/talepler", json={"baslik": "Yeni talep", "musteri": "ali@example.com"}, headers=yetkili(),
     )
     assert yanit.status_code == 401
-    assert len(istemci.get("/talepler").json()) == 5
+    assert len(numaralar(istemci.get("/talepler"))) == 5
 
 
 def test_ascii_olmayan_anahtar_401(istemci):
@@ -298,3 +326,58 @@ def test_yorum_baska_talepte_gorunmez(istemci):
     yanit = istemci.post("/talepler/1/yorumlar", json={"yazan": "ayse", "metin": "Bir"}, headers=yetkili())
     assert yanit.status_code == 201
     assert istemci.get("/talepler/2/yorumlar").json() == []
+
+
+# Liste ucu: altına en az beş test yaz.
+
+
+def test_liste_limit_iki_talep_ve_sonraki_verir(istemci):
+    yanit = istemci.get("/talepler", params={"limit": 2})
+    assert yanit.status_code == 200
+    assert numaralar(yanit) == [5, 4]
+    assert isinstance(yanit.json()["sonraki"], str)
+
+
+def test_liste_son_sayfanin_sonrakisi_null(istemci):
+    ilk = istemci.get("/talepler", params={"limit": 2})
+    ikinci = istemci.get("/talepler", params={"limit": 2, "ayrac": ilk.json()["sonraki"]})
+    ucuncu = istemci.get("/talepler", params={"limit": 2, "ayrac": ikinci.json()["sonraki"]})
+    assert numaralar(ucuncu) == [1]
+    assert ucuncu.json()["sonraki"] is None
+
+
+@pytest.mark.parametrize("deger", ["0", "101", "abc"])
+def test_liste_gecersiz_limit_422(istemci, deger):
+    yanit = istemci.get("/talepler", params={"limit": deger})
+    assert yanit.status_code == 422
+    assert yanit.json()["detail"][0]["loc"] == ["query", "limit"]
+
+
+def test_liste_limit_yuz_kabul_edilir(istemci):
+    yanit = istemci.get("/talepler", params={"limit": 100})
+    assert yanit.status_code == 200
+    assert numaralar(yanit) == [5, 4, 3, 2, 1]
+
+
+def test_liste_varsayilan_sayfa_yirmi(istemci):
+    for sira in range(16):
+        olusan = istemci.post(
+            "/talepler", json={"baslik": f"Yeni talep {sira}", "musteri": "ali@example.com"}, headers=yetkili(),
+        )
+        assert olusan.status_code == 201
+    yanit = istemci.get("/talepler")
+    assert len(numaralar(yanit)) == 20
+    assert yanit.json()["sonraki"] is not None
+
+
+def test_liste_ayrac_filtrelerle_birlikte_calisir(istemci):
+    ilk = istemci.get("/talepler", params={"durum": "acik", "limit": 1})
+    assert numaralar(ilk) == [5]
+    ikinci = istemci.get("/talepler", params={"durum": "acik", "limit": 1, "ayrac": ilk.json()["sonraki"]})
+    assert numaralar(ikinci) == [3]
+    assert [talep["durum"] for talep in ikinci.json()["talepler"]] == ["acik"]
+
+
+def test_liste_ara_ve_durum_birlikte(istemci):
+    assert numaralar(istemci.get("/talepler", params={"ara": "şifre", "durum": "acik"})) == [3]
+    assert numaralar(istemci.get("/talepler", params={"ara": "şifre", "durum": "kapali"})) == []

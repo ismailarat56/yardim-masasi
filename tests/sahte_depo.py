@@ -3,10 +3,11 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep, Yorum
+from yardim_masasi.sayfa import Ayrac, Sayfa
 
 
 class BellekDeposu:
-    """PgTalepDeposu ile aynı sözleşmeyi uygulayan test deposu."""
+    """PgTalepDeposu ile aynı metotları taşır; veriyi bellekte tutar. Yalnız testler için."""
 
     def __init__(self, talepler: Iterable[Talep] = ()) -> None:
         self._talepler = {talep.id: talep for talep in talepler}
@@ -28,15 +29,27 @@ class BellekDeposu:
         return sayilar
 
     async def listele(
-        self, *, durum: Durum | None = None, oncelik: Oncelik | None = None,
+        self,
+        *,
+        durum: Durum | None = None,
+        oncelik: Oncelik | None = None,
         etiket: str | None = None,
-    ) -> list[Talep]:
-        return [
-            talep for talep in sorted(self._talepler.values(), key=lambda t: t.id)
+        ara: str | None = None,
+        sonra: Ayrac | None = None,
+        limit: int = 20,
+    ) -> Sayfa:
+        uyanlar = [
+            talep
+            for talep in sorted(self._talepler.values(), key=_sira, reverse=True)
             if (durum is None or talep.durum == durum)
             and (oncelik is None or talep.oncelik == oncelik)
             and (etiket is None or etiket in talep.etiketler)
+            and (ara is None or _kelimeler_gecer(ara, talep.baslik))
+            and (sonra is None or _sira(talep) < (sonra.acildi, sonra.id))
         ]
+        talepler = uyanlar[:limit]
+        sonraki = Ayrac.talepten(talepler[-1]) if len(uyanlar) > limit else None
+        return Sayfa(talepler, sonraki)
 
     async def guncelle(
         self,
@@ -71,3 +84,16 @@ class BellekDeposu:
         if talep_id not in self._talepler:
             return None
         return [yorum for yorum in self._yorumlar if yorum.talep_id == talep_id]
+
+
+def _sira(talep: Talep) -> tuple[datetime, int]:
+    """Listeleme sırası: (acildi, id). Büyükten küçüğe dizilir."""
+    ayrac = Ayrac.talepten(talep)
+    return (ayrac.acildi, ayrac.id)
+
+
+def _kelimeler_gecer(ara: str, baslik: str) -> bool:
+    """Kaba bir taklit: aranan her kelime başlıkta geçiyor mu. Kök bulmaz, -, or ve tırnak bilmez;
+    arama sözleşmesi yalnız PostgreSQL'de test edilir."""
+    kelimeler = ara.casefold().split()
+    return bool(kelimeler) and all(kelime in baslik.casefold() for kelime in kelimeler)

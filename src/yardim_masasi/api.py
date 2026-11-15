@@ -5,12 +5,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request, Response
 from psycopg_pool import AsyncConnectionPool
 
 from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep, Yorum
 from yardim_masasi.pg_depo import PgTalepDeposu
-from yardim_masasi.sema import TalepCevap, TalepGuncelle, TalepOlustur, YorumCevap, YorumOlustur
+from yardim_masasi.sayfa import Ayrac, GecersizAyrac, ayrac_oku, ayrac_yaz
+from yardim_masasi.sema import TalepCevap, TalepGuncelle, TalepOlustur, TalepSayfasi, YorumCevap, YorumOlustur
 from yardim_masasi.veritabani import baglanti_adresi
 
 
@@ -56,9 +57,24 @@ def beklenen_surum(if_match: Annotated[str | None, Header()] = None) -> int:
     return int(eslesme.group(1))
 
 
+def sayfa_ayraci(ayrac: Annotated[str | None, Query()] = None) -> Ayrac | None:
+    if ayrac is None:
+        return None
+    try:
+        return ayrac_oku(ayrac)
+    except GecersizAyrac as hata:
+        raise HTTPException(
+            status_code=400,
+            detail="ayraç geçersiz: önceki sayfanın sonraki alanını değiştirmeden gönder",
+        ) from hata
+
+
 Depo = Annotated[PgTalepDeposu, Depends(depo_al)]
 TalepNo = Annotated[int, Path(gt=0)]
 BeklenenSurum = Annotated[int, Depends(beklenen_surum)]
+SayfaAyraci = Annotated[Ayrac | None, Depends(sayfa_ayraci)]
+Limit = Annotated[int, Query(ge=1, le=100)]
+Arama = Annotated[str | None, Query(min_length=2, max_length=100)]
 
 
 @app.get("/saglik")
@@ -68,14 +84,21 @@ async def saglik(request: Request) -> dict[str, str]:
     return {"durum": "ok"}
 
 
-@app.get("/talepler", response_model=list[TalepCevap])
+@app.get("/talepler", response_model=TalepSayfasi)
 async def talepleri_listele(
     depo: Depo,
+    sonra: SayfaAyraci,
     durum: Durum | None = None,
     oncelik: Oncelik | None = None,
     etiket: str | None = None,
-) -> list[Talep]:
-    return await depo.listele(durum=durum, oncelik=oncelik, etiket=etiket)
+    ara: Arama = None,
+    limit: Limit = 20,
+) -> dict[str, object]:
+    sayfa = await depo.listele(durum=durum, oncelik=oncelik, etiket=etiket, ara=ara, sonra=sonra, limit=limit)
+    return {
+        "talepler": sayfa.talepler,
+        "sonraki": None if sayfa.sonraki is None else ayrac_yaz(sayfa.sonraki),
+    }
 
 
 @app.get("/talepler/ozet")

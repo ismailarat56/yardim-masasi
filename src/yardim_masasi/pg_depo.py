@@ -6,6 +6,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep, Yorum
+from yardim_masasi.sayfa import Ayrac, Sayfa
 
 SUTUNLAR: Final = "id, baslik, durum, oncelik, musteri, etiketler, acildi, surum"
 YORUM_SUTUNLARI: Final = "id, talep_id, yazan, metin, yazildi"
@@ -68,9 +69,17 @@ class PgTalepDeposu:
         return sayilar
 
     async def listele(
-        self, *, durum: Durum | None = None, oncelik: Oncelik | None = None,
+        self,
+        *,
+        durum: Durum | None = None,
+        oncelik: Oncelik | None = None,
         etiket: str | None = None,
-    ) -> list[Talep]:
+        ara: str | None = None,
+        sonra: Ayrac | None = None,
+        limit: int = 20,
+    ) -> Sayfa:
+        arama_kosulu = "" if ara is None else "AND arama @@ websearch_to_tsquery('turkish', %(ara)s)"
+        ayrac_kosulu = "" if sonra is None else "AND (acildi, id) < (%(acildi)s, %(id)s)"
         async with self._havuz.connection() as baglanti:
             async with baglanti.cursor(row_factory=dict_row) as imlec:
                 await imlec.execute(
@@ -79,11 +88,25 @@ class PgTalepDeposu:
                     WHERE (%(durum)s::text IS NULL OR durum = %(durum)s)
                       AND (%(oncelik)s::text IS NULL OR oncelik = %(oncelik)s)
                       AND (%(etiket)s::text IS NULL OR %(etiket)s = ANY (etiketler))
-                    ORDER BY id
+                      {arama_kosulu}
+                      {ayrac_kosulu}
+                    ORDER BY acildi DESC, id DESC
+                    LIMIT %(limit)s
                     """,
-                    {"durum": durum, "oncelik": oncelik, "etiket": etiket},
+                    {
+                        "durum": durum,
+                        "oncelik": oncelik,
+                        "etiket": etiket,
+                        "ara": ara,
+                        "acildi": None if sonra is None else sonra.acildi,
+                        "id": None if sonra is None else sonra.id,
+                        "limit": limit + 1,
+                    },
                 )
-                return [talep_satirdan(satir) for satir in await imlec.fetchall()]
+                satirlar = await imlec.fetchall()
+        talepler = [talep_satirdan(satir) for satir in satirlar[:limit]]
+        sonraki = Ayrac.talepten(talepler[-1]) if len(satirlar) > limit else None
+        return Sayfa(talepler, sonraki)
 
     async def guncelle(
         self,

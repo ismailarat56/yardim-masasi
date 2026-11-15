@@ -1,6 +1,11 @@
-"""Aynı sözleşme testleri bellek ve PostgreSQL depolarında koşar."""
+"""PgTalepDeposu ve BellekDeposu aynı sözleşmeye uyar: aynı testler ikisinde de koşar.
+
+PostgreSQL testleri TEST_DATABASE_URL tanımlı değilse atlanır:
+    uv run --env-file .env pytest tests/test_depo_sozlesme.py
+"""
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import psycopg
@@ -10,10 +15,13 @@ from psycopg_pool import AsyncConnectionPool
 from sahte_depo import BellekDeposu
 from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep
 from yardim_masasi.pg_depo import PgTalepDeposu
+from yardim_masasi.sayfa import Ayrac
 from yardim_masasi.veritabani import ornekleri_yukle
 
 pytestmark = pytest.mark.anyio
+
 T0 = datetime(2026, 11, 1, 9, 0, tzinfo=UTC)
+
 ORNEKLER = [
     Talep(1, "Giriş yapamıyorum", Durum.ACIK, Oncelik.YUKSEK, "ayse@example.com", ("hesap", "giris"), T0),
     Talep(2, "Fatura adresi yanlış", Durum.KAPALI, Oncelik.ORTA, "mehmet@example.com", ("fatura",), T0 + timedelta(hours=1)),
@@ -23,15 +31,26 @@ ORNEKLER = [
 ]
 
 
-@pytest.fixture(params=["bellek", "pg"])
-async def depo(request):
-    if request.param == "bellek":
-        yield BellekDeposu(ORNEKLER)
+# Açılış zamanları numara sırasıyla gitmiyor; bazı talepler aynı anda açılmış.
+KARISIK = [
+    Talep(1, "Kargo gecikti", Durum.ACIK, Oncelik.ORTA, "a@example.com", (), T0 + timedelta(hours=2)),
+    Talep(2, "Fatura gelmedi", Durum.ACIK, Oncelik.ORTA, "b@example.com", (), T0),
+    Talep(3, "Şifre sıfırlanmıyor", Durum.ACIK, Oncelik.ORTA, "c@example.com", (), T0 + timedelta(hours=2)),
+    Talep(4, "İade yatmadı", Durum.ACIK, Oncelik.ORTA, "d@example.com", (), T0),
+    Talep(5, "Hesap kilitlendi", Durum.ACIK, Oncelik.ORTA, "e@example.com", (), T0 + timedelta(hours=1)),
+    Talep(6, "Uygulama donuyor", Durum.ACIK, Oncelik.ORTA, "f@example.com", (), T0 + timedelta(hours=2)),
+]
+
+
+@asynccontextmanager
+async def depo_ac(request, tur, talepler):
+    if tur == "bellek":
+        yield BellekDeposu(talepler)
         return
     adres = request.getfixturevalue("test_adresi")
     with psycopg.connect(adres) as baglanti:
         baglanti.execute("TRUNCATE talepler RESTART IDENTITY CASCADE")
-        ornekleri_yukle(baglanti, ORNEKLER)
+        ornekleri_yukle(baglanti, talepler)
     havuz = AsyncConnectionPool(adres, connection_class=psycopg.AsyncConnection, min_size=1, max_size=2, open=False)
     await havuz.open(wait=True, timeout=5)
     try:
@@ -40,12 +59,41 @@ async def depo(request):
         await havuz.close()
 
 
-def numaralar(talepler):
-    return [talep.id for talep in talepler]
+@pytest.fixture(params=["bellek", "pg"])
+async def depo(request):
+    async with depo_ac(request, request.param, ORNEKLER) as acilan:
+        yield acilan
+
+
+@pytest.fixture(params=["bellek", "pg"])
+async def karisik_depo(request):
+    async with depo_ac(request, request.param, KARISIK) as acilan:
+        yield acilan
+
+
+def numaralar(sayfa):
+    return [talep.id for talep in sayfa.talepler]
+
+
+async def butun_sayfalar(depo, **secenekler):
+    """Sonraki ayracı izleyerek bütün sayfaları okur; numaraları sırayla döndürür."""
+    gorulen = []
+    sonra = None
+    for _ in range(100):
+        sayfa = await depo.listele(sonra=sonra, **secenekler)
+        gorulen += numaralar(sayfa)
+        if sayfa.sonraki is None:
+            return gorulen
+        sonra = sayfa.sonraki
+    raise AssertionError(f"100 sayfada bitmedi: {gorulen[:20]}")
+
+
+# getir, ekle, durum_sayilari (hazır verildi)
 
 
 async def test_getir_talebi_bulur(depo):
-    assert await depo.getir(1) == ORNEKLER[0]
+    talep = await depo.getir(1)
+    assert talep == ORNEKLER[0]
 
 
 async def test_getir_olmayan_talepte_none(depo):
@@ -65,40 +113,175 @@ async def test_durum_sayilari(depo):
     assert await depo.durum_sayilari() == {Durum.ACIK: 3, Durum.BEKLEMEDE: 1, Durum.KAPALI: 1}
 
 
-async def test_listele_hepsini_numara_sirasiyla_verir(depo):
-    assert numaralar(await depo.listele()) == [1, 2, 3, 4, 5]
+# listele: en yeniden eskiye, sayfa sayfa (senin yazdığın)
+
+
+async def test_listele_en_yeniden_eskiye(depo):
+    sayfa = await depo.listele()
+    assert numaralar(sayfa) == [5, 4, 3, 2, 1]
+    assert sayfa.sonraki is None
+
+
+async def test_listele_sira_numaraya_degil_zamana_gore(karisik_depo):
+    assert numaralar(await karisik_depo.listele()) == [6, 3, 1, 5, 4, 2]
+
+
+async def test_listele_varsayilan_limit_yirmi(depo):
+    for sira in range(20):
+        await depo.ekle(baslik=f"Yeni talep {sira}", musteri="ali@example.com", oncelik=Oncelik.ORTA, etiketler=[])
+    sayfa = await depo.listele()
+    assert len(sayfa.talepler) == 20
+    assert sayfa.sonraki is not None
+    buyuk = await depo.listele(limit=24)
+    assert len(buyuk.talepler) == 24
+    assert buyuk.sonraki is not None
+
+
+async def test_listele_limit_kadar_verir_ve_ayrac_birakir(depo):
+    sayfa = await depo.listele(limit=2)
+    assert numaralar(sayfa) == [5, 4]
+    assert sayfa.sonraki == Ayrac.talepten(ORNEKLER[3])
+
+
+async def test_listele_ayractan_sonrasini_verir(depo):
+    sayfa = await depo.listele(limit=2, sonra=Ayrac.talepten(ORNEKLER[3]))
+    assert numaralar(sayfa) == [3, 2]
+    assert sayfa.sonraki == Ayrac.talepten(ORNEKLER[1])
+
+
+async def test_listele_son_sayfada_ayrac_yok(depo):
+    sayfa = await depo.listele(limit=2, sonra=Ayrac.talepten(ORNEKLER[1]))
+    assert numaralar(sayfa) == [1]
+    assert sayfa.sonraki is None
+
+
+async def test_listele_tam_dolan_son_sayfada_ayrac_yok(depo):
+    sayfa = await depo.listele(limit=5)
+    assert numaralar(sayfa) == [5, 4, 3, 2, 1]
+    assert sayfa.sonraki is None
+
+
+async def test_listele_en_eskiden_sonrasi_bos(depo):
+    sayfa = await depo.listele(sonra=Ayrac.talepten(ORNEKLER[0]))
+    assert sayfa.talepler == []
+    assert sayfa.sonraki is None
+
+
+@pytest.mark.parametrize("limit", [1, 2, 3, 4, 5, 6])
+async def test_sayfalar_her_talebi_bir_kez_verir(karisik_depo, limit):
+    assert await butun_sayfalar(karisik_depo, limit=limit) == [6, 3, 1, 5, 4, 2]
+
+
+async def test_ayrac_var_olan_bir_talep_olmak_zorunda_degil(karisik_depo):
+    sayfa = await karisik_depo.listele(sonra=Ayrac(T0 + timedelta(minutes=90), 999))
+    assert numaralar(sayfa) == [5, 4, 2]
+
+
+async def test_sayfalar_arasinda_eklenen_talep_kaydirmaz(depo):
+    ilk = await depo.listele(limit=2)
+    await depo.ekle(baslik="Yeni talep", musteri="ali@example.com", oncelik=Oncelik.ORTA, etiketler=[])
+    ikinci = await depo.listele(limit=2, sonra=ilk.sonraki)
+    assert numaralar(ikinci) == [3, 2]
 
 
 async def test_listele_duruma_gore(depo):
-    assert numaralar(await depo.listele(durum=Durum.ACIK)) == [1, 3, 5]
+    assert numaralar(await depo.listele(durum=Durum.ACIK)) == [5, 3, 1]
 
 
 async def test_listele_oncelige_gore(depo):
-    assert numaralar(await depo.listele(oncelik=Oncelik.YUKSEK)) == [1, 3]
+    assert numaralar(await depo.listele(oncelik=Oncelik.YUKSEK)) == [3, 1]
 
 
 async def test_listele_etikete_gore(depo):
-    assert numaralar(await depo.listele(etiket="hesap")) == [1, 3]
+    assert numaralar(await depo.listele(etiket="hesap")) == [3, 1]
 
 
 async def test_listele_etiket_tam_eslesir(depo):
-    assert await depo.listele(etiket="hes") == []
+    assert numaralar(await depo.listele(etiket="hes")) == []
 
 
 async def test_listele_filtreler_birlikte(depo):
     assert numaralar(await depo.listele(durum=Durum.ACIK, oncelik=Oncelik.ORTA)) == [5]
 
 
+async def test_filtreler_sayfalarla_birlikte(depo):
+    assert await butun_sayfalar(depo, limit=1, durum=Durum.ACIK) == [5, 3, 1]
+
+
 async def test_listele_eslesme_yoksa_bos(depo):
-    assert await depo.listele(etiket="yok") == []
+    sayfa = await depo.listele(etiket="yok")
+    assert sayfa.talepler == []
+    assert sayfa.sonraki is None
 
 
 async def test_listele_tirnakli_etiket_sorguyu_bozmaz(depo):
-    assert await depo.listele(etiket="hesap' OR '1'='1") == []
+    assert numaralar(await depo.listele(etiket="hesap' OR '1'='1")) == []
 
 
 async def test_listele_tam_talep_dondurur(depo):
-    assert await depo.listele(durum=Durum.BEKLEMEDE) == [ORNEKLER[3]]
+    sayfa = await depo.listele(durum=Durum.BEKLEMEDE)
+    assert sayfa.talepler == [ORNEKLER[3]]
+
+
+# ara: tam metin arama, yalnız PostgreSQL'de (hazır verildi)
+
+yalniz_pg = pytest.mark.parametrize("depo", ["pg"], indirect=True)
+
+
+@yalniz_pg
+async def test_ara_kelimeyi_bulur(depo):
+    assert numaralar(await depo.listele(ara="şifre")) == [3]
+
+
+@yalniz_pg
+async def test_ara_buyuk_kucuk_harfe_bakmaz(depo):
+    assert numaralar(await depo.listele(ara="KARGO")) == [5]
+
+
+@yalniz_pg
+async def test_ara_ekli_kelimeyi_bulur(depo):
+    assert numaralar(await depo.listele(ara="kargom")) == [5]
+    assert numaralar(await depo.listele(ara="şifremi")) == [3]
+
+
+@yalniz_pg
+async def test_ara_kelimelerin_hepsi_gecmeli(depo):
+    assert numaralar(await depo.listele(ara="kargo numarası")) == [5]
+    assert numaralar(await depo.listele(ara="kargo şifre")) == []
+
+
+@yalniz_pg
+async def test_ara_or_ve_eksi(depo):
+    assert numaralar(await depo.listele(ara="kargo or şifre")) == [5, 3]
+    assert numaralar(await depo.listele(ara="kargo -takip")) == []
+
+
+@yalniz_pg
+async def test_ara_tirnakli_ifade_sirayi_korur(depo):
+    assert numaralar(await depo.listele(ara='"takip numarası"')) == [5]
+    assert numaralar(await depo.listele(ara='"numarası takip"')) == []
+
+
+@yalniz_pg
+async def test_ara_durak_kelimesi_hata_vermez(depo):
+    assert numaralar(await depo.listele(ara="ve")) == []
+
+
+@yalniz_pg
+async def test_ara_tirnak_ve_isaretler_sorguyu_bozmaz(depo):
+    assert numaralar(await depo.listele(ara="kargo' OR '1'='1")) == [5]
+
+
+@yalniz_pg
+async def test_ara_filtreler_ve_sayfalarla_birlikte(depo):
+    assert await butun_sayfalar(depo, limit=1, ara="gelmiyor or yapamıyorum") == [3, 1]
+    assert numaralar(await depo.listele(ara="şifre", durum=Durum.KAPALI)) == []
+
+
+@yalniz_pg
+async def test_yeni_talep_aranabilir(depo):
+    await depo.ekle(baslik="Kargom kayboldu", musteri="ali@example.com", oncelik=Oncelik.ORTA, etiketler=[])
+    assert numaralar(await depo.listele(ara="kargo")) == [6, 5]
 
 
 # guncelle: sürüm kontrollü (senin yazdığın)
@@ -154,14 +337,14 @@ async def test_guncelle_diger_alanlari_ve_talepleri_degistirmez(depo):
     assert await depo.getir(1) == ORNEKLER[0]
 
 
-async def test_listele_guncellemeden_sonra_da_numara_sirasiyla(depo):
+async def test_listele_guncellemeden_sonra_sira_degismez(depo):
     await depo.guncelle(1, surum=1, durum=Durum.BEKLEMEDE)
-    assert numaralar(await depo.listele()) == [1, 2, 3, 4, 5]
+    assert numaralar(await depo.listele()) == [5, 4, 3, 2, 1]
 
 
 async def test_guncelle_olmayan_talepte_none(depo):
     assert await depo.guncelle(99, surum=1, durum=Durum.KAPALI) is None
-    assert numaralar(await depo.listele()) == [1, 2, 3, 4, 5]
+    assert numaralar(await depo.listele()) == [5, 4, 3, 2, 1]
 
 
 async def test_olmayan_talepte_surum_ne_olursa_olsun_none(depo):

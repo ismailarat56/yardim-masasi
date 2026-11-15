@@ -43,6 +43,11 @@ class TalepCevap(BaseModel):
     surum: int
 
 
+class TalepSayfasi(BaseModel):
+    talepler: list[TalepCevap]
+    sonraki: str | None
+
+
 Yazan = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
 YorumMetni = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
