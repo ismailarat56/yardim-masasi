@@ -193,6 +193,32 @@ def test_guncelle_eski_surum_412(istemci):
     assert istemci.get("/talepler/4").json()["durum"] == "kapali"
 
 
+def test_getir_etiket_tutarsa_304(istemci):
+    yanit = istemci.get("/talepler/3", headers={"If-None-Match": '"1"'})
+    assert yanit.status_code == 304
+    assert yanit.headers["ETag"] == '"1"'
+    assert yanit.content == b""
+
+
+def test_getir_etiket_eskiyse_200(istemci):
+    istemci.patch("/talepler/3", json={"durum": "kapali"}, headers=kosullu('"1"'))
+    yanit = istemci.get("/talepler/3", headers={"If-None-Match": '"1"'})
+    assert yanit.status_code == 200
+    assert yanit.headers["ETag"] == '"2"'
+    assert yanit.json()["durum"] == "kapali"
+
+
+@pytest.mark.parametrize("deger", ['W/"1"', '"7", "1"', "*"])
+def test_getir_zayif_liste_ve_yildiz_304(istemci, deger):
+    yanit = istemci.get("/talepler/3", headers={"If-None-Match": deger})
+    assert yanit.status_code == 304
+
+
+def test_getir_olmayan_talepte_304_degil_404(istemci):
+    yanit = istemci.get("/talepler/99", headers={"If-None-Match": "*"})
+    assert yanit.status_code == 404
+
+
 # Ek testler: her biri geçici üretim kodu değişikliğiyle kırmızı görüldü.
 
 

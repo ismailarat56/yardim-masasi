@@ -48,6 +48,13 @@ def etag(talep: Talep) -> str:
     return f'"{talep.surum}"'
 
 
+def etiket_uyar(if_none_match: str, guncel: str) -> bool:
+    """If-None-Match zayıf karşılaştırılır: W/"3" ile "3" aynıdır; * her etikete uyar."""
+    if if_none_match.strip() == "*":
+        return True
+    return any(parca.strip().removeprefix("W/") == guncel for parca in if_none_match.split(","))
+
+
 def beklenen_surum(if_match: Annotated[str | None, Header()] = None) -> int:
     if if_match is None:
         raise HTTPException(status_code=428, detail="If-Match başlığı gerekli: önce talebi GET ile oku")
@@ -107,10 +114,17 @@ async def talep_ozeti(depo: Depo) -> dict[Durum, int]:
 
 
 @app.get("/talepler/{talep_id}", response_model=TalepCevap)
-async def talep_getir(talep_id: TalepNo, depo: Depo, response: Response) -> Talep:
+async def talep_getir(
+    talep_id: TalepNo,
+    depo: Depo,
+    response: Response,
+    if_none_match: Annotated[str | None, Header()] = None,
+) -> Talep | Response:
     talep = await depo.getir(talep_id)
     if talep is None:
         raise HTTPException(status_code=404, detail="talep bulunamadı")
+    if if_none_match is not None and etiket_uyar(if_none_match, etag(talep)):
+        return Response(status_code=304, headers={"ETag": etag(talep)})
     response.headers["ETag"] = etag(talep)
     return talep
 
