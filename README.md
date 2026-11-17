@@ -4,7 +4,7 @@
 
 `talep-ozeti` komutu bir JSON dosyasındaki destek taleplerini durumlarına göre sayar ve kapanmamış talepleri öncelik sırasıyla listeler. `ornek/talepler.json` on iki örnek talep içerir.
 
-Projenin üçüncü parçası, talepleri PostgreSQL'de saklayıp listeleme, okuma, oluşturma ve güncelleme işlerini HTTP üzerinden sunan bir FastAPI uygulamasıdır. API taleplere yazılan yorumları da tutar, talepleri sayfa sayfa listeler ve başlıklarında arar; veritabanı şeması Alembic migration'larıyla kurulur.
+Projenin üçüncü parçası, talepleri PostgreSQL'de saklayıp listeleme, okuma, oluşturma ve güncelleme işlerini HTTP üzerinden sunan bir FastAPI uygulamasıdır. API taleplere yazılan yorumları da tutar, talepleri sayfa sayfa listeler ve başlıklarında arar; veritabanı şeması Alembic migration'larıyla kurulur. Veritabanı, migration'lar ve API tek bir `docker compose up` komutuyla kaplarda çalışır.
 
 Proje aynı zamanda Python yorumlayıcısı, sanal ortam, `uv`, bağımlılık yönetimi ve ortam değişkenleri üzerine bir çalışma örneğidir.
 
@@ -13,7 +13,7 @@ Proje aynı zamanda Python yorumlayıcısı, sanal ortam, `uv`, bağımlılık y
 - [uv](https://docs.astral.sh/uv/): Python ve proje bağımlılıklarını yönetir.
 - Python 3.15: geliştirme sürümü `.python-version` dosyasında seçilidir. `pyproject.toml` en az Python 3.15 ister. Uygun yorumlayıcı yoksa uv, otomatik indirme açıkken onu kurabilir.
 - İlk kurulumda paketleri indirmek ve kullanım sırasında PyPI'ya erişmek için internet bağlantısı.
-- [Docker](https://docs.docker.com/get-docker/) ve Docker Compose: API'nin kullandığı PostgreSQL veritabanını bir kapta çalıştırır.
+- [Docker](https://docs.docker.com/get-docker/) ve Docker Compose: API'nin kullandığı PostgreSQL veritabanını bir kapta çalıştırır; istenirse API de bir kapta çalışır.
 
 ## Kurulum
 
@@ -266,7 +266,7 @@ Sunucu `http://127.0.0.1:8000` adresinde açılır ve kod değiştikçe kendini 
 
 | Uç | İşlev | Başarı | Hata kodları |
 | --- | --- | --- | --- |
-| `GET /saglik` | Veritabanına `SELECT 1` gönderir. | `200` `{"durum": "ok"}` | `500` veritabanına ulaşılamazsa |
+| `GET /saglik` | Veritabanına `SELECT 1` gönderir; havuzdan bağlantı için en çok 2 saniye bekler. | `200` `{"durum": "ok"}` | `503` `{"durum": "veritabanına ulaşılamıyor"}`, veritabanına ulaşılamazsa |
 | `GET /talepler` | Talepleri en yeniden eskiye, sayfa sayfa listeler; `durum`, `oncelik` ve `etiket` ile süzer, `?ara=` ile başlıkta arar; `?limit=` sayfa boyunu, `?ayrac=` sonraki sayfayı seçer. | `200` | `400` bozuk ayraç, `422` bilinmeyen durum veya öncelik, geçersiz `limit` ya da `ara` |
 | `GET /talepler/ozet` | Her durumdaki talep sayısını verir; talebi olmayan durum `0` görünür. | `200` | — |
 | `GET /talepler/{talep_id}` | Tek talebi verir; `ETag` başlığında talebin sürümü bulunur. `If-None-Match` sürümle eşleşirse gövdesiz `304` döner. | `200`, `304` | `404` talep yok, `422` numara pozitif tam sayı değil |
@@ -375,6 +375,48 @@ curl -i -X POST http://127.0.0.1:8000/talepler/4/yorumlar \
   -d '{"yazan": "ayse", "metin": "Müşteriyi aradım."}'
 ```
 
+## Kapta Çalıştırma
+
+`compose.yaml` üç servis tanımlar:
+
+| Servis | Ne yapar |
+| --- | --- |
+| `db` | PostgreSQL 18 (`postgres:18-alpine`). Veriyi `db-data` biriminde tutar, makineye `127.0.0.1:5434`'ten açılır; `pg_isready` ile sağlık denetimi yapılır. |
+| `migrate` | Projenin imajıyla `alembic upgrade head` çalıştırır, bekleyen revizyonları uygular ve `0` koduyla çıkar. Veritabanı zaten en son revizyondaysa hiçbir şey uygulamadan çıkar. |
+| `api` | Aynı imajla `fastapi run` çalıştırır; `127.0.0.1:8000`'de açılır. Beş saniyede bir kabın içinden `/saglik`'e istek atan bir sağlık kontrolü vardır: komut üç saniyede bitmezse ya da `200` dışında bir yanıt gelirse kontrol başarısız sayılır, üst üste üç başarısızlıkta kap `unhealthy` olur. Compose sağlıksız kabı yeniden başlatmaz, yalnızca işaretler. |
+
+Sık kullanılan komutlar:
+
+| Komut | Etkisi |
+| --- | --- |
+| `docker compose up -d --build --wait` | İmajı kurar (değişmeyen adımlar önbellekten gelir), üç servisi açar ve `db` ile `api` sağlıklı, `migrate` bitmiş olana kadar bekler. Bir servis sağlıksız kalırsa hata koduyla döner. |
+| `docker compose up -d db` | Yalnızca veritabanını açar; API makinede `fastapi dev` ile çalıştırılacaksa bu kullanılır. |
+| `docker compose ps -a` | Kapları durumlarıyla listeler; `-a` bitmiş `migrate` kabını da gösterir (`Exited (0)`). |
+| `docker compose logs -f api` | API'nin günlüklerini gösterir ve yenilerini izler; `Ctrl+C` ile çıkılır. |
+| `docker compose exec api talep-yukle` | Örnek talepleri kabın içinden yükler; komut, `ornek/` klasörü ve `DATABASE_URL` kabın içindedir. |
+| `docker compose down` | Kapları ve ağı siler; veriler `db-data` biriminde kalır, sonraki `up` aynı veriyle açılır. |
+| `docker compose down -v` | Birimi de siler; bütün veriler gider. Sonraki `up` boş bir veritabanıyla başlar, `migrate` şemayı baştan kurar. |
+
+Servisler sırayla başlar. `migrate`, `depends_on` ile `db`'nin sağlık denetimini (`service_healthy`) bekler; `api` de `migrate`'in başarıyla bitmesini (`service_completed_successfully`). Migration başarısız olursa `api` hiç açılmaz. Yalnızca `depends_on: [db]` yazmak kabın başlamasını beklerdi, PostgreSQL'in bağlantı kabul etmeye hazır olmasını değil.
+
+Kaptaki uygulamalar veritabanına `db:5432`'den bağlanır. Her kabın kendi ağ ortamı vardır: kabın içinde `127.0.0.1` kabın kendisidir, `.env`'deki `127.0.0.1:5434` orada çalışmaz. Compose servisleri ortak bir ağa koyar ve servis adı (`db`) veritabanı kabının adresine çözülür. `5434` yalnızca makinenin kapısıdır; ağın içinden PostgreSQL'in kendi portu `5432` kullanılır. `migrate` ve `api` `.env`'yi `env_file` ile okur, ama `environment` altındaki `DATABASE_URL` `.env`'dekini ezer; `.env`'deki adres makinede çalışan komutlar için kalır.
+
+`Dockerfile` iki aşamalıdır:
+
+- `kur`: `python:3.15-slim` üzerine `ghcr.io/astral-sh/uv:0.13.7`'den `uv` kopyalanır. Önce yalnızca `pyproject.toml` ve `uv.lock` kopyalanıp bağımlılıklar kurulur (`--no-install-project`), kod sonra gelir; böylece kod değiştiğinde bağımlılık katmanı önbellekten gelir, yalnızca proje yeniden kurulur. `--no-dev` geliştirme grubunu (`pytest`, `pyright`) kurmaz, kapta test koşulmaz.
+- `calis`: tabanı yine `python:3.15-slim`'dir, çünkü `.venv/bin/python` taban imajdaki Python'a bir bağlantıdır. Bu aşamaya yalnızca `kur`'un `/app` klasörü gelir; `uv` ve derleme bağlamı imaja girmez. Ev klasörü olmayan `uygulama` adında bir sistem kullanıcısı kurulur ve kap onunla çalışır; `/app`'teki dosyalar root'a ait kaldığı için uygulama kodunu okuyup çalıştırabilir, değiştiremez.
+
+`CMD` exec biçimindedir (`["fastapi", "run", ...]`): arada kabuk olmadığı için uygulama kabın 1 numaralı sürecidir ve `docker compose stop`'un gönderdiği `SIGTERM`'i doğrudan alıp düzgünce kapanır. Shell biçiminde (`CMD fastapi run ...`) 1 numaralı süreç `sh` olur, sinyali uygulamaya iletmez; Docker 10 saniye bekleyip `SIGKILL` gönderir ve kap `137` koduyla çıkar.
+
+`.dockerignore`, `.venv`, `.env`, `.env.db`, `.git`, her klasördeki `__pycache__` (`**/__pycache__`) ve `.pytest_cache`'i derleme bağlamının dışında tutar. Böylece parolalar ve API anahtarı imaja girmez, makinedeki sanal ortam kopyalanmaz ve derleyiciye gönderilen bağlam küçülür.
+
+API kapta çalışırken makinenin `8000` portunu `api` kabı tutar; makinede `fastapi dev` açılırsa `address already in use` hatası verir. Makinede geliştirmek için önce kabı durdur:
+
+```bash
+docker compose stop api
+uv run --env-file .env fastapi dev src/yardim_masasi/api.py
+```
+
 ## Kod Düzeni
 
 `src/yardim_masasi/` altında:
@@ -401,7 +443,9 @@ Proje kökünde (`sql/` klasörü artık yok; şema migration'larda):
     alembic.ini           Alembic ayarları: migrations/ klasörü ve günlük biçimi; veritabanı adresi burada değil
     migrations/env.py     adresi DATABASE_URL'den alır; --sql ile çevrimdışı, normalde tek işlemde çalışır
     migrations/versions/  0001 talepler, 0002 surum sütunu, 0003 yorumlar revizyonları
-    compose.yaml          PostgreSQL 18 kabı, 127.0.0.1:5434 portu, db-data birimi ve sağlık denetimi
+    compose.yaml          db (PostgreSQL 18, 127.0.0.1:5434, db-data birimi, sağlık denetimi), tek seferlik migrate ve sağlık kontrollü api (127.0.0.1:8000) servisleri
+    Dockerfile            iki aşamalı imaj: kur bağımlılıkları uv ile kurar; calis yalnızca /app'i alır ve uygulama kullanıcısıyla çalışır
+    .dockerignore         .venv, .env, .env.db, .git, __pycache__ ve .pytest_cache'i derleme bağlamının dışında tutar
 
 ## Ortam Değişkenleri
 
@@ -523,6 +567,8 @@ Testler `alembic.ini`'yi okumaz: `alembic_ayari` yalnızca `script_location`'ı 
 
 `test_sayfa.py` veritabanı kullanmaz: ayracın yazılıp okunduğunda aynı kaldığını, saat dilimini koruduğunu, adreste kaçışsız kullanılabildiğini ve bozuk ya da değiştirilmiş metinlerin `GecersizAyrac` ile reddedildiğini denetler. `test_api.py` veritabanı kullanmaz: `TestClient` lifespan'ı çalıştırmadığı için bağlantı havuzu açılmaz ve `app.dependency_overrides` ile `depo_al` yerine bellek deposu verilir. Bu testler Docker kapalıyken de geçer.
 
+`test_saglik.py` de veritabanı kullanmaz. `tests/sahte_havuz.py`'deki `SahteHavuz`, bağlantı havuzunun `connection(timeout=...)` metodunu taklit eder: hata verilmezse sorguyu kaydeden bir `SahteBaglanti` verir; `bekleme_hatasi` havuzun bağlantı veremediği durumu, `sorgu_hatasi` sorgu sırasında kopan bağlantıyı taklit eder. Testler `monkeypatch` ile `app.state.havuz` yerine bu sahte havuzu koyar ve `/saglik`'in veritabanı cevap verince `200` ile `SELECT 1` gönderdiğini, havuz bekletince ve bağlantı kopunca `503` döndüğünü, havuzdan en çok 2 saniye bağlantı beklediğini ve `OperationalError` olmayan bir hatayı yutmadığını denetler.
+
 Testler metin yardımcılarını, talep modelini, zaman doğrulamasını, depoyu, JSONL
 akışını, filtreleri ve komutun çıktı/çıkış kodlarını kontrol eder. PyPI yeniden
 deneme testleri gerçek ağ isteği yerine sahte yanıtlar ve taşıma hataları kullanır.
@@ -550,7 +596,10 @@ deneme testleri gerçek ağ isteği yerine sahte yanıtlar ve taşıma hataları
 - Bağımlılıklar için otomatik güvenlik açığı taraması yapılandırılmamıştır.
 - Varsayılan `ornek/talepler.json` yolu komutun çalıştırıldığı klasöre göredir; proje kökünden başka bir klasörde "dosya bulunamadı" der.
 - Talep dosyası UTF-8 değilse düzgün bir mesaj yok; Python'un hata izi basılır.
-- API çalışırken veritabanı kapanırsa havuzdaki kopuk bağlantıyı alan ilk istek hemen `500` alır. Havuz yeni bağlantı kuramadığı için sonraki istekler bağlantı beklerken havuzun 30 saniyelik zaman aşımına kadar bekler ve sonra `500` alır. `/saglik` de aynı biçimde davranır.
+- API çalışırken veritabanı kapanırsa havuzdaki kopuk bağlantıyı alan ilk istek hemen hata alır. Sonraki isteklerde yalnızca `/saglik` en çok 2 saniye bekleyip `503` döner; öbür uçlar havuzun 30 saniyelik zaman aşımına kadar bekler ve sonra `500` alır. Veritabanı geri geldiğinde havuzun yeniden bağlanma süresi sabit değildir; istekler birkaç saniye daha hata alabilir.
+- Kapta tek bir uvicorn süreci çalışıyor; birden çok işçi ya da kopya yok.
+- `migrate` her `docker compose up`'ta çalışıyor. Aynı veritabanına iki yerden aynı anda `up` yapılırsa migration'lar birbiriyle yarışabilir.
+- Taban imajlar (`python:3.15-slim`, `ghcr.io/astral-sh/uv:0.13.7`, `postgres:18-alpine`) etiketle seçiliyor, özetle (`@sha256:...`) sabitlenmiyor; aynı etiket zamanla başka bir imajı gösterebilir. İmaj güvenlik açıklarına karşı taranmıyor.
 - API anahtarı tek ve herkesin paylaştığı bir değer. Kullanıcı ayrımı yok; bir talebi kimin oluşturduğu ya da değiştirdiği kaydedilmiyor. Anahtarı değiştirmek sunucuyu yeni ortam değişkeniyle yeniden başlatmayı gerektiriyor.
 - Migration'lar elle yazılıyor. Tablolar SQLAlchemy modeliyle tanımlanmadığı için `alembic revision --autogenerate` kullanılamıyor; şema ile revizyonların uyumunu yalnızca testler denetliyor.
 - `If-Match` yalnızca tek ve tırnaklı bir sürüm kabul ediyor. `*`, zayıf etiket (`W/"1"`) ve virgülle ayrılmış birden çok etiket standartta geçerli olsa da `400` alıyor.
