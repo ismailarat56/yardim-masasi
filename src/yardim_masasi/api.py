@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request, Response
+from psycopg import OperationalError
 from psycopg_pool import AsyncConnectionPool
 
 from yardim_masasi.model import Durum, Oncelik, SurumCakismasi, Talep, Yorum
@@ -84,10 +85,22 @@ Limit = Annotated[int, Query(ge=1, le=100)]
 Arama = Annotated[str | None, Query(min_length=2, max_length=100)]
 
 
+SAGLIK_SURESI = 2
+
+
 @app.get("/saglik")
-async def saglik(request: Request) -> dict[str, str]:
-    async with request.app.state.havuz.connection() as baglanti:
-        await baglanti.execute("SELECT 1")
+async def saglik(request: Request, response: Response) -> dict[str, str]:
+    """Veritabanına SAGLIK_SURESI saniyede ulaşamazsa 503 döner.
+
+    Havuz kendi başına 30 saniye bekler; sağlık kontrolü o kadar bekleyemez.
+    PoolTimeout da kopmuş bağlantının hatası da OperationalError'dır.
+    """
+    try:
+        async with request.app.state.havuz.connection(timeout=SAGLIK_SURESI) as baglanti:
+            await baglanti.execute("SELECT 1")
+    except OperationalError:
+        response.status_code = 503
+        return {"durum": "veritabanına ulaşılamıyor"}
     return {"durum": "ok"}
 
 
