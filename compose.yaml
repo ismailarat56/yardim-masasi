@@ -14,5 +14,28 @@ services:
       timeout: 3s
       retries: 10
 
+  migrate:
+    build: .
+    image: yardim-masasi
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://yardim:yardim@db:5432/yardim_masasi
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    image: yardim-masasi
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://yardim:yardim@db:5432/yardim_masasi
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   db-data:
