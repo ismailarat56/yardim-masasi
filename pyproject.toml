@@ -1,7 +1,7 @@
 [project]
 name = "yardim-masasi"
 version = "0.1.0"
-description = "Add your description here"
+description = "PyPI sürüm sorgusu, destek talebi özeti ve talepleri PostgreSQL'de saklayan FastAPI uygulaması."
 readme = "README.md"
 authors = [
     { name = "ismailarat56", email = "182799816+ismailarat56@users.noreply.github.com" }
