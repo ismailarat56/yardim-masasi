@@ -1,4 +1,4 @@
-[← README'ye dön](../README.md)
+[← README'ye dön](../README.tr.md)
 
 # Bilinen Sınırlamalar
 
